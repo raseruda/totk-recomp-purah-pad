@@ -2,113 +2,37 @@
 (function () {
   "use strict";
 
-  const INV_CATS = [
-    { key: "weapons", label: "Armas" },
-    { key: "bows", label: "Arcos" },
-    { key: "shields", label: "Escudos" },
-    { key: "armor", label: "Armaduras" },
-    { key: "materials", label: "Materiais" },
-    { key: "food", label: "Comidas" },
-    { key: "zonai", label: "Zonai" },
-    { key: "keyItems", label: "Itens-Chave" },
-    { key: "arrows", label: "Flechas" },
+  const tr = (key, vars) => (window.PurahI18n ? window.PurahI18n.t(key, vars) : key);
+
+  const INV_CATS = ["weapons", "bows", "shields", "armor", "materials", "food", "zonai", "keyItems", "arrows"];
+  const QUEST_CATS = ["all", "main_quest", "side_adventure", "shrine_quest", "side_quest"];
+  const QUEST_STATUSES = ["active", "available", "complete", "locked", "all"];
+  const PIN_COLOR_HEX = [
+    ["Red", "#ff4d5a"],
+    ["Blue", "#3c9dff"],
+    ["Yellow", "#ffd638"],
+    ["Green", "#4ce67c"],
+    ["Purple", "#c46eff"],
+    ["LightBlue", "#48ebff"],
   ];
-
-  const SAGES_PT = {
-    Wind: "Tulin (Vento)",
-    Fire: "Yunobo (Fogo)",
-    Water: "Sidon (Água)",
-    Electric: "Riju (Raio)",
-    Soul: "Mineru (Espírito)",
-  };
-
-  const QUEST_CATS = [
-    { key: "all", label: "Todas" },
-    { key: "main_quest", label: "Principais" },
-    { key: "side_adventure", label: "Aventuras" },
-    { key: "shrine_quest", label: "Santuários" },
-    { key: "side_quest", label: "Secundárias" },
-  ];
-
-  const QUEST_STATUSES = [
-    { key: "active", label: "Em andamento" },
-    { key: "available", label: "Disponíveis" },
-    { key: "complete", label: "Concluídas" },
-    { key: "locked", label: "Bloqueadas" },
-    { key: "all", label: "Todas" },
-  ];
-
-  const QUEST_STATUS_LABELS = {
-    active: "Em andamento",
-    available: "Disponível",
-    complete: "Concluída",
-    queued: "Em série",
-    locked: "Bloqueada",
-  };
-
-  const EFFECT_PT = {
-    AttackUp: "Ataque +",
-    AttackUpPlus: "Ataque ++",
-    DurabilityUp: "Durabilidade +",
-    DurabilityUpPlus: "Durabilidade ++",
-    FinishBlow: "Golpe Final",
-    LongThrow: "Longo Alcance",
-    RapidFire: "Disparo Rápido",
-    ThreeWayZoom: "Tiro Triplo",
-    FiveWay: "Tiro Quíntuplo",
-    GuardUp: "Defesa +",
-    GuardUpPlus: "Defesa ++",
-  };
-
-  const PIN_COLORS_PT = {
-    Red: "Pino Vermelho",
-    Blue: "Pino Azul",
-    Yellow: "Pino Amarelo",
-    Green: "Pino Verde",
-    Purple: "Pino Roxo",
-    LightBlue: "Pino Azul-Claro",
-  };
-
-  const STAMP_NAMES_PT = {
-    Sword: "Espada",
-    Pot: "Caldeirão",
-    Human: "Pessoa",
-    Rhombus: "Cristal / Santuário",
-    Heart: "Coração",
-    Star: "Estrela",
-    TreasureBox: "Baú",
-    Skull: "Caveira / Perigo",
-    Leaf: "Folha / Korok",
-    Ore: "Minério",
-  };
+  const STAMP_KEYS = ["Sword", "Pot", "Human", "Rhombus", "Heart", "Star", "TreasureBox", "Skull", "Leaf", "Ore"];
 
   const MAP_PREFS_KEY = "purahpad_map_prefs_v1";
-  const MODE_DESCS = {
-    spoiler_free: "Oculta santuários, koroks e segredos ainda não descobertos",
-    assist: "Mostra o já descoberto + tudo dentro do raio ao redor do Link",
-    full: "Mostra todos os marcadores e segredos de Hyrule",
-  };
 
-  const WIKI_CATS = [
-    { key: "all", label: "Todos" },
-    { key: "Weapon", label: "Armas" },
-    { key: "Bow", label: "Arcos & Flechas" },
-    { key: "Shield", label: "Escudos" },
-    { key: "Armor", label: "Armaduras" },
-    { key: "Material", label: "Materiais" },
-    { key: "Food", label: "Comidas" },
-    { key: "SpecialParts", label: "Zonai" },
-    { key: "KeyItem", label: "Itens-Chave" },
-  ];
+  const WIKI_CATS = ["all", "Weapon", "Bow", "Shield", "Armor", "Material", "Food", "SpecialParts", "KeyItem"];
 
   function formatShopPrice(g) {
     if (!g) return "";
-    const cur = g.currency === "Rupees" ? "rupees" : g.currency || "rupees";
+    const cur = g.currency === "Rupees" ? tr("detail.currencyRupees") : g.currency || tr("detail.currencyRupees");
     return `${g.price ?? 0} ${cur}`;
   }
 
   const state = {
     activeTab: "map",
+    activeLang: null,
+    i18nApplied: false,
+    streamStarted: false,
+    pollTimersStarted: false,
     status: null,
     live: null,
     snapshot: null,
@@ -226,7 +150,7 @@
       b.classList.toggle("active", b.dataset.mode === state.mapMode);
     });
     const desc = $("map-mode-desc");
-    if (desc) desc.textContent = MODE_DESCS[state.mapMode] || "";
+    if (desc) desc.textContent = tr("map.modeDesc." + state.mapMode);
     const box = $("assist-controls");
     if (box) box.classList.toggle("hidden", state.mapMode !== "assist");
     const rng = $("rng-assist-radius");
@@ -286,7 +210,7 @@
       if (hideDone) {
         if (state.mapMode === "spoiler_free") {
           const rem = foundArr.reduce((a, b, idx) => a + (b && !doneArr[idx] ? 1 : 0), 0);
-          countText = `${rem} pendentes`;
+          countText = tr("count.pending", { n: rem });
         } else if (state.mapMode === "assist") {
           let vis = 0;
           for (let i = 0; i < list.length; i++) {
@@ -298,13 +222,13 @@
               if (p && mapCtrl.isInAssistRadius(p.x, p.z, list[i].layer || "surface")) vis++;
             }
           }
-          countText = `${vis} restantes`;
+          countText = tr("count.remaining", { n: vis });
         } else {
-          countText = `${list.length - doneCount} restantes`;
+          countText = tr("count.remaining", { n: list.length - doneCount });
         }
       } else if (state.mapMode === "spoiler_free") {
         const discovered = doneCount + foundArr.reduce((a, b, idx) => a + (b && !doneArr[idx] ? 1 : 0), 0);
-        countText = `${discovered} achados`;
+        countText = tr("count.found", { n: discovered });
       } else if (state.mapMode === "assist") {
         let vis = 0;
         for (let i = 0; i < list.length; i++) {
@@ -315,7 +239,7 @@
             if (p && mapCtrl.isInAssistRadius(p.x, p.z, list[i].layer || "surface")) vis++;
           }
         }
-        countText = `${vis} visíveis`;
+        countText = tr("count.visible", { n: vis });
       } else {
         countText = `${doneCount}/${list.length}`;
       }
@@ -324,7 +248,7 @@
       el.className = "cat-item" + (mapCtrl.enabledCats.has(meta.key) ? " on" : "");
       el.innerHTML = `
         <div class="cat-left">
-          <img src="/api/icon/map/${meta.icon}.png?v=4" alt="" onerror="this.style.display='none'" />
+          <img src="/api/icon/map/${meta.icon}.png?v=5" alt="" onerror="this.style.display='none'" />
           <span class="cat-name">${esc(meta.label)}</span>
         </div>
         <span class="cat-count">${countText}</span>
@@ -340,7 +264,7 @@
 
     const groupHdr = document.createElement("div");
     groupHdr.className = "cat-group-label";
-    groupHdr.textContent = "Mundo Vivo";
+    groupHdr.textContent = tr("map.livingWorld");
     container.appendChild(groupHdr);
 
     const layerMap = ["surface", "sky", "depths"];
@@ -350,7 +274,7 @@
 
     for (const meta of mapCtrl.getEntityMeta()) {
       const arr = state.entitiesData ? state.entitiesData[meta.key] || [] : null;
-      let countText = "Carregar";
+      let countText = tr("count.load");
       if (arr) {
         if (state.mapMode === "full") {
           countText = `${arr.length}`;
@@ -362,7 +286,7 @@
               vis++;
             }
           }
-          countText = state.mapMode === "assist" ? `${vis} visíveis` : `${vis} na área`;
+          countText = state.mapMode === "assist" ? tr("count.visible", { n: vis }) : tr("count.inArea", { n: vis });
         }
       } else if (mapCtrl.enabledEntities.has(meta.key)) {
         countText = "...";
@@ -372,7 +296,7 @@
       el.className = "cat-item" + (mapCtrl.enabledEntities.has(meta.key) ? " on" : "");
       el.innerHTML = `
         <div class="cat-left">
-          <img src="/api/icon/map/${meta.icon}.png?v=4" alt="" onerror="this.style.display='none'" />
+          <img src="/api/icon/map/${meta.icon}.png?v=5" alt="" onerror="this.style.display='none'" />
           <span class="cat-name">${esc(meta.label)}</span>
         </div>
         <span class="cat-count">${countText}</span>
@@ -430,8 +354,8 @@
     mapCtrl.selected = {
       kind: "entity",
       cat: meta.key,
-      catLabel: hasQuest ? "NPC c/ Missão Secundária" : meta.label,
-      singular: hasQuest ? "NPC (Missão Disponível)" : meta.singular,
+      catLabel: hasQuest ? tr("ent.questNpcCat") : tr("ent." + meta.key),
+      singular: hasQuest ? tr("ent.questNpcSingular") : tr("ent." + meta.key + ".singular"),
       index,
       display_name: name,
       count: ent[5] || 1,
@@ -474,15 +398,16 @@
     if (item.kind === "world") {
       const o = item.raw;
       const statusBadge = item.done
-        ? `<span class="status-tag complete">Concluído</span>`
+        ? `<span class="status-tag complete">${esc(tr("detail.done"))}</span>`
         : item.found
-        ? `<span class="status-tag active">Descoberto</span>`
-        : `<span class="status-tag queued">Não descoberto</span>`;
-      const catSubtitle = o.sub_label ? `${item.catLabel} · ${o.sub_label}` : item.catLabel;
+        ? `<span class="status-tag active">${esc(tr("detail.found"))}</span>`
+        : `<span class="status-tag queued">${esc(tr("detail.unfound"))}</span>`;
+      const catLbl = item.cat ? tr("cat." + item.cat) : item.catLabel;
+      const catSubtitle = o.sub_label ? `${catLbl} · ${o.sub_label}` : catLbl;
       const goods = Array.isArray(o.goods) ? o.goods : [];
       const goodsHtml = goods.length
         ? `<div class="shop-goods-box">
-            <h4>Itens à venda (${goods.length})</h4>
+            <h4>${esc(tr("detail.shopGoods", { n: goods.length }))}</h4>
             <div class="shop-goods-list">
               ${goods
                 .map(
@@ -507,14 +432,14 @@
         </div>
         <div style="margin-bottom:10px">${statusBadge}</div>
         <div class="kv-list">
-          <div class="kv-row"><span>Camada</span><strong>${esc(window.PurahMap.LAYER_LABELS[o.layer] || o.layer)}</strong></div>
-          <div class="kv-row"><span>Coordenadas</span><strong>${Math.round(o.position.x)}, ${Math.round(o.position.z)}, ${Math.round(o.position.y)}</strong></div>
-          <div class="kv-row"><span>Distância do Link</span><strong>${dist}</strong></div>
-          ${o.puzzle_type ? `<div class="kv-row"><span>Tipo de puzzle</span><strong>${esc(o.puzzle_type)}</strong></div>` : ""}
+          <div class="kv-row"><span>${esc(tr("detail.layer"))}</span><strong>${esc(window.PurahMap.LAYER_LABELS[o.layer] || o.layer)}</strong></div>
+          <div class="kv-row"><span>${esc(tr("detail.coords"))}</span><strong>${Math.round(o.position.x)}, ${Math.round(o.position.z)}, ${Math.round(o.position.y)}</strong></div>
+          <div class="kv-row"><span>${esc(tr("detail.distLink"))}</span><strong>${dist}</strong></div>
+          ${o.puzzle_type ? `<div class="kv-row"><span>${esc(tr("detail.puzzleType"))}</span><strong>${esc(o.puzzle_type)}</strong></div>` : ""}
         </div>
         ${
           o.contents && o.contents.length
-            ? `<div class="step-box"><h4>Dispensador contém</h4><div>${o.contents.map(esc).join(" · ")}</div></div>`
+            ? `<div class="step-box"><h4>${esc(tr("detail.dispenserContains"))}</h4><div>${o.contents.map(esc).join(" · ")}</div></div>`
             : ""
         }
         ${goodsHtml}
@@ -528,14 +453,14 @@
       const iconName = quests.length ? "entity_npc_quest" : (entMeta && entMeta.icon) || "entity_npc";
       const questsHtml = quests.length
         ? `<div class="npc-quests-box">
-            <h4>Missões Secundárias Disponíveis</h4>
+            <h4>${esc(tr("detail.npcQuests"))}</h4>
             ${quests
               .map(
                 (q) => `
               <div class="npc-quest-card">
                 <div class="npc-quest-title">${esc(q.name)}</div>
                 <div class="npc-quest-meta">${esc(q.region || "Hyrule")}</div>
-                <button class="btn btn-gold" data-open-quest="${esc(q.id)}" style="width:100%;padding:5px 10px;font-size:12px">Abrir no Diário</button>
+                <button class="btn btn-gold" data-open-quest="${esc(q.id)}" style="width:100%;padding:5px 10px;font-size:12px">${esc(tr("detail.openInJournal"))}</button>
               </div>`
               )
               .join("")}
@@ -544,19 +469,19 @@
       panel.innerHTML = `
         <div class="detail-head">
           <div style="display:flex;align-items:center;gap:10px">
-            <img src="/api/icon/map/${esc(iconName)}.png?v=4" onerror="this.style.display='none'" alt="" style="width:34px;height:34px;object-fit:contain" />
+            <img src="/api/icon/map/${esc(iconName)}.png?v=5" onerror="this.style.display='none'" alt="" style="width:34px;height:34px;object-fit:contain" />
             <div>
-              <div class="muted" style="font-size:11px;margin-bottom:2px">${esc(item.singular || item.catLabel)}</div>
+              <div class="muted" style="font-size:11px;margin-bottom:2px">${esc(quests.length ? tr("ent.questNpcSingular") : (entMeta && entMeta.singular) || item.singular || item.catLabel)}</div>
               <h3>${esc(item.display_name)}</h3>
             </div>
           </div>
           <button class="icon-btn" id="btn-close-map-detail">✕</button>
         </div>
         <div class="kv-list">
-          ${item.count > 1 ? `<div class="kv-row"><span>Quantidade neste ponto</span><strong>${item.count}×</strong></div>` : ""}
-          <div class="kv-row"><span>Camada</span><strong>${esc(window.PurahMap.LAYER_LABELS[item.layer] || item.layer)}</strong></div>
-          <div class="kv-row"><span>Coordenadas</span><strong>${Math.round(item.position.x)}, ${Math.round(item.position.z)}, ${Math.round(item.position.y)}</strong></div>
-          <div class="kv-row"><span>Distância do Link</span><strong>${dist}</strong></div>
+          ${item.count > 1 ? `<div class="kv-row"><span>${esc(tr("detail.countHere"))}</span><strong>${item.count}×</strong></div>` : ""}
+          <div class="kv-row"><span>${esc(tr("detail.layer"))}</span><strong>${esc(window.PurahMap.LAYER_LABELS[item.layer] || item.layer)}</strong></div>
+          <div class="kv-row"><span>${esc(tr("detail.coords"))}</span><strong>${Math.round(item.position.x)}, ${Math.round(item.position.z)}, ${Math.round(item.position.y)}</strong></div>
+          <div class="kv-row"><span>${esc(tr("detail.distLink"))}</span><strong>${dist}</strong></div>
         </div>
         ${questsHtml}
       `;
@@ -577,17 +502,17 @@
       panel.innerHTML = `
         <div class="detail-head">
           <div>
-            <div class="muted" style="font-size:11px;margin-bottom:3px">Missão Ativa</div>
+            <div class="muted" style="font-size:11px;margin-bottom:3px">${esc(tr("detail.activeQuest"))}</div>
             <h3>${esc(q.name)}</h3>
           </div>
           <button class="icon-btn" id="btn-close-map-detail">✕</button>
         </div>
         <div class="detail-desc">${esc(st.stepText || "")}</div>
         <div class="kv-list">
-          <div class="kv-row"><span>Região</span><strong>${esc(q.region || "—")}</strong></div>
-          <div class="kv-row"><span>Distância</span><strong>${dist}</strong></div>
+          <div class="kv-row"><span>${esc(tr("detail.region"))}</span><strong>${esc(q.region || "—")}</strong></div>
+          <div class="kv-row"><span>${esc(tr("detail.dist"))}</span><strong>${dist}</strong></div>
         </div>
-        <button class="btn btn-gold" id="btn-open-in-quests" style="width:100%;margin-top:8px">Abrir no Diário</button>
+        <button class="btn btn-gold" id="btn-open-in-quests" style="width:100%;margin-top:8px">${esc(tr("detail.openInJournal"))}</button>
       `;
       setTimeout(() => {
         const b = $("btn-open-in-quests");
@@ -603,29 +528,29 @@
       const isPin = item.kind === "pin";
       const isLive = state.live && state.live.mode === "live" && state.live.status === "ready";
       const iconName = isPin ? `pin_${item.raw.type}` : `stamp_${item.raw.type}`;
-      const title = isPin ? PIN_COLORS_PT[item.raw.type] || "Pino" : `Carimbo: ${STAMP_NAMES_PT[item.raw.type] || item.raw.type}`;
+      const title = isPin ? tr("pin." + item.raw.type) || tr("detail.pinDefault") : tr("detail.stampPrefix", { name: tr("stamp." + item.raw.type) || item.raw.type });
       const hasSlot = typeof item.raw.slot === "number";
       panel.innerHTML = `
         <div class="detail-head">
           <div style="display:flex;align-items:center;gap:10px">
-            <img src="/api/icon/map/${esc(iconName)}.png?v=4" alt="" style="width:36px;height:36px;object-fit:contain" />
+            <img src="/api/icon/map/${esc(iconName)}.png?v=5" alt="" style="width:36px;height:36px;object-fit:contain" />
             <div>
-              <div class="muted" style="font-size:11px;margin-bottom:2px">Marcação do Jogo</div>
+              <div class="muted" style="font-size:11px;margin-bottom:2px">${esc(tr("detail.gameMark"))}</div>
               <h3>${esc(title)}</h3>
             </div>
           </div>
           <button class="icon-btn" id="btn-close-map-detail">✕</button>
         </div>
         <div class="kv-list">
-          <div class="kv-row"><span>Camada</span><strong>${esc(window.PurahMap.LAYER_LABELS[item.layer] || item.layer)}</strong></div>
-          <div class="kv-row"><span>Coordenadas</span><strong>${Math.round(pos.x)}, ${Math.round(pos.z)}${isPin && typeof pos.y === "number" ? `, ${Math.round(pos.y)}` : ""}</strong></div>
-          <div class="kv-row"><span>Distância</span><strong>${dist}</strong></div>
+          <div class="kv-row"><span>${esc(tr("detail.layer"))}</span><strong>${esc(window.PurahMap.LAYER_LABELS[item.layer] || item.layer)}</strong></div>
+          <div class="kv-row"><span>${esc(tr("detail.coords"))}</span><strong>${Math.round(pos.x)}, ${Math.round(pos.z)}${isPin && typeof pos.y === "number" ? `, ${Math.round(pos.y)}` : ""}</strong></div>
+          <div class="kv-row"><span>${esc(tr("detail.dist"))}</span><strong>${dist}</strong></div>
         </div>
         ${
           hasSlot && isLive
-            ? `<button id="btn-del-game-mark" class="btn btn-danger" style="width:100%;margin-top:10px">Remover do Jogo</button>
-               <div class="muted" style="font-size:11px;margin-top:6px;line-height:1.35">Remove imediatamente do mapa do jogo em execução.</div>`
-            : `<div class="muted" style="font-size:11px;margin-top:8px">Abra e carregue um save no jogo para editar marcações do jogo ao vivo.</div>`
+            ? `<button id="btn-del-game-mark" class="btn btn-danger" style="width:100%;margin-top:10px">${esc(tr("detail.removeFromGame"))}</button>
+               <div class="muted" style="font-size:11px;margin-top:6px;line-height:1.35">${esc(tr("detail.removeFromGameHint"))}</div>`
+            : `<div class="muted" style="font-size:11px;margin-top:8px">${esc(tr("detail.needLiveMark"))}</div>`
         }
         <div id="game-mark-err" class="muted" style="color:var(--danger);font-size:12px;margin-top:6px"></div>
       `;
@@ -658,20 +583,20 @@
       panel.innerHTML = `
         <div class="detail-head">
           <div>
-            <div class="muted" style="font-size:11px;margin-bottom:3px">Marcador Personalizado</div>
+            <div class="muted" style="font-size:11px;margin-bottom:3px">${esc(tr("detail.customMarker"))}</div>
             <h3>${esc(mk.title)}</h3>
           </div>
           <button class="icon-btn" id="btn-close-map-detail">✕</button>
         </div>
-        <div class="detail-desc">${esc(mk.note || "Sem anotações.")}</div>
+        <div class="detail-desc">${esc(mk.note || tr("detail.noNotes"))}</div>
         <div class="kv-list">
-          <div class="kv-row"><span>Camada</span><strong>${esc(window.PurahMap.LAYER_LABELS[mk.layer] || mk.layer)}</strong></div>
-          <div class="kv-row"><span>Coordenadas</span><strong>${Math.round(mk.x)}, ${Math.round(mk.z)}</strong></div>
-          <div class="kv-row"><span>Distância</span><strong>${dist}</strong></div>
+          <div class="kv-row"><span>${esc(tr("detail.layer"))}</span><strong>${esc(window.PurahMap.LAYER_LABELS[mk.layer] || mk.layer)}</strong></div>
+          <div class="kv-row"><span>${esc(tr("detail.coords"))}</span><strong>${Math.round(mk.x)}, ${Math.round(mk.z)}</strong></div>
+          <div class="kv-row"><span>${esc(tr("detail.dist"))}</span><strong>${dist}</strong></div>
         </div>
         <div style="display:flex;gap:8px;margin-top:10px">
-          <button class="btn btn-gold" id="btn-edit-mk" style="flex:1">Editar</button>
-          <button class="btn btn-danger" id="btn-del-mk" style="flex:1">Excluir</button>
+          <button class="btn btn-gold" id="btn-edit-mk" style="flex:1">${esc(tr("detail.edit"))}</button>
+          <button class="btn btn-danger" id="btn-del-mk" style="flex:1">${esc(tr("detail.delete"))}</button>
         </div>
       `;
       setTimeout(() => {
@@ -702,35 +627,26 @@
     const isEdit = Boolean(init.id);
     const isLive = state.live && state.live.mode === "live" && state.live.status === "ready";
     const activePins = new Set((((state.live && state.live.map) || (state.snapshot && state.snapshot.map) || {}).pins || []).map((p) => p.type));
-    const pinColors = [
-      ["Red", "Vermelho", "#ff4d5a"],
-      ["Blue", "Azul", "#3c9dff"],
-      ["Yellow", "Amarelo", "#ffd638"],
-      ["Green", "Verde", "#4ce67c"],
-      ["Purple", "Roxo", "#c46eff"],
-      ["LightBlue", "Azul-Claro", "#48ebff"],
-    ];
-    const stampKeys = Object.keys(STAMP_NAMES_PT);
     let mode = isEdit ? "note" : isLive ? "pin" : "note";
 
     const renderBody = () => {
       const layerLbl = window.PurahMap.LAYER_LABELS[init.layer || mapCtrl.layer] || mapCtrl.layer;
       panel.innerHTML = `
         <div class="detail-head">
-          <h3>${isEdit ? "Editar Nota" : "Marcar no Mapa"}</h3>
+          <h3>${esc(isEdit ? tr("mk.editNote") : tr("mk.addTitle"))}</h3>
           <button class="icon-btn" id="btn-close-mk-form">✕</button>
         </div>
         ${
           !isEdit
             ? `<div class="pill-bar" style="margin-bottom:12px">
-                <button class="pill ${mode === "pin" ? "active" : ""}" data-mkmode="pin">Pino do Jogo</button>
-                <button class="pill ${mode === "stamp" ? "active" : ""}" data-mkmode="stamp">Carimbo</button>
-                <button class="pill ${mode === "note" ? "active" : ""}" data-mkmode="note">Nota</button>
+                <button class="pill ${mode === "pin" ? "active" : ""}" data-mkmode="pin">${esc(tr("mk.tabPin"))}</button>
+                <button class="pill ${mode === "stamp" ? "active" : ""}" data-mkmode="stamp">${esc(tr("mk.tabStamp"))}</button>
+                <button class="pill ${mode === "note" ? "active" : ""}" data-mkmode="note">${esc(tr("mk.tabNote"))}</button>
               </div>`
             : ""
         }
         <div class="kv-list" style="margin-bottom:12px">
-          <div class="kv-row"><span>Local</span><strong>${Math.round(init.x)}, ${Math.round(init.z)} (${esc(layerLbl)})</strong></div>
+          <div class="kv-row"><span>${esc(tr("mk.location"))}</span><strong>${Math.round(init.x)}, ${Math.round(init.z)} (${esc(layerLbl)})</strong></div>
         </div>
         <div id="mk-mode-body"></div>
         <div id="mk-err" class="muted" style="color:var(--danger);font-size:12px;margin-top:8px"></div>
@@ -747,19 +663,19 @@
       const body = $("mk-mode-body");
       if (mode === "pin") {
         if (!isLive) {
-          body.innerHTML = `<div class="empty-hint" style="padding:12px 0">Entre em um save no jogo para colocar pinos coloridos ao vivo. Você ainda pode criar uma Nota na aba ao lado.</div>`;
+          body.innerHTML = `<div class="empty-hint" style="padding:12px 0">${esc(tr("mk.needLivePin"))}</div>`;
           return;
         }
         body.innerHTML = `
-          <div class="muted" style="font-size:12px;margin-bottom:8px">Escolha a cor do pino (se já existir, será movido para cá):</div>
+          <div class="muted" style="font-size:12px;margin-bottom:8px">${esc(tr("mk.pickPin"))}</div>
           <div class="picker-grid pins">
-            ${pinColors
+            ${PIN_COLOR_HEX
               .map(
-                ([k, lbl, hex]) => `
+                ([k, hex]) => `
                 <button class="picker-btn" data-pin="${k}">
-                  <img src="/api/icon/map/pin_${k}.png?v=4" alt="" />
-                  <span>${lbl}</span>
-                  ${activePins.has(k) ? `<small style="color:${hex}">Mover</small>` : `<small class="muted">Novo</small>`}
+                  <img src="/api/icon/map/pin_${k}.png?v=5" alt="" />
+                  <span>${esc(tr("color." + k))}</span>
+                  ${activePins.has(k) ? `<small style="color:${hex}">${esc(tr("mk.move"))}</small>` : `<small class="muted">${esc(tr("mk.new"))}</small>`}
                 </button>`
               )
               .join("")}
@@ -795,18 +711,18 @@
         });
       } else if (mode === "stamp") {
         if (!isLive) {
-          body.innerHTML = `<div class="empty-hint" style="padding:12px 0">Entre em um save no jogo para adicionar carimbos ao vivo.</div>`;
+          body.innerHTML = `<div class="empty-hint" style="padding:12px 0">${esc(tr("mk.needLiveStamp"))}</div>`;
           return;
         }
         body.innerHTML = `
-          <div class="muted" style="font-size:12px;margin-bottom:8px">Escolha o carimbo para gravar no mapa do jogo:</div>
+          <div class="muted" style="font-size:12px;margin-bottom:8px">${esc(tr("mk.pickStamp"))}</div>
           <div class="picker-grid stamps">
-            ${stampKeys
+            ${STAMP_KEYS
               .map(
                 (k) => `
                 <button class="picker-btn" data-stamp="${k}">
-                  <img src="/api/icon/map/stamp_${k}.png?v=4" alt="" />
-                  <span>${esc(STAMP_NAMES_PT[k])}</span>
+                  <img src="/api/icon/map/stamp_${k}.png?v=5" alt="" />
+                  <span>${esc(tr("stamp." + k))}</span>
                 </button>`
               )
               .join("")}
@@ -843,22 +759,22 @@
       } else {
         body.innerHTML = `
           <div class="form-group">
-            <label>Título</label>
-            <input id="mk-title" class="form-control" value="${esc(init.title || "")}" placeholder="Ex: Mina de Zonaite / Lynel Prateado" />
+            <label>${esc(tr("mk.titleLabel"))}</label>
+            <input id="mk-title" class="form-control" value="${esc(init.title || "")}" placeholder="${esc(tr("mk.titlePlaceholder"))}" />
           </div>
           <div class="form-group">
-            <label>Cor</label>
+            <label>${esc(tr("mk.colorLabel"))}</label>
             <input id="mk-color" type="color" class="form-control" style="height:36px;padding:3px" value="${esc(init.color || "#f0c850")}" />
           </div>
           <div class="form-group">
-            <label>Notas</label>
-            <textarea id="mk-note" class="form-control" placeholder="Anotações da 2ª tela...">${esc(init.note || "")}</textarea>
+            <label>${esc(tr("mk.notesLabel"))}</label>
+            <textarea id="mk-note" class="form-control" placeholder="${esc(tr("mk.notesPlaceholder"))}">${esc(init.note || "")}</textarea>
           </div>
-          <button id="btn-save-mk" class="btn btn-gold" style="width:100%;margin-top:8px">Salvar Nota</button>
+          <button id="btn-save-mk" class="btn btn-gold" style="width:100%;margin-top:8px">${esc(tr("mk.saveNote"))}</button>
         `;
         $("btn-save-mk").onclick = async () => {
           const payload = {
-            title: $("mk-title").value.trim() || "Marcador",
+            title: $("mk-title").value.trim() || tr("mk.defaultName"),
             note: $("mk-note").value.trim(),
             color: $("mk-color").value,
             layer: init.layer || mapCtrl.layer,
@@ -955,7 +871,7 @@
       }
 
       if (!hits.length) {
-        box.innerHTML = `<div class="search-row"><span class="muted">Nenhum resultado</span></div>`;
+        box.innerHTML = `<div class="search-row"><span class="muted">${esc(tr("search.noResults"))}</span></div>`;
       } else {
         box.innerHTML = "";
         for (const h of hits) {
@@ -1012,16 +928,16 @@
     const pill = $("conn-pill");
     const mode = (data && data.mode) || "offline";
     if (mode === "live") {
-      pill.textContent = "● AO VIVO";
+      pill.textContent = tr("conn.live");
       pill.className = "conn-pill live";
     } else if (mode === "title") {
-      pill.textContent = "● TELA TÍTULO (SAVE)";
+      pill.textContent = tr("conn.title");
       pill.className = "conn-pill title";
     } else if (mode === "save") {
-      pill.textContent = "● SAVE LOCAL";
+      pill.textContent = tr("conn.save");
       pill.className = "conn-pill save";
     } else {
-      pill.textContent = "● OFFLINE";
+      pill.textContent = tr("conn.offline");
       pill.className = "conn-pill offline";
     }
 
@@ -1078,21 +994,21 @@
     sagesBox.innerHTML = sages
       .map((s) => {
         const cls = !s.joined ? "locked" : s.summoned ? "active" : "";
-        const stTxt = !s.joined ? "Bloqueado" : s.summoned ? "Invocado" : "Guardado";
-        return `<div class="sage-badge ${cls}"><strong>${esc(SAGES_PT[s.id] || s.id)}</strong><span>${stTxt}</span></div>`;
+        const stTxt = !s.joined ? tr("inv.sage.locked") : s.summoned ? tr("inv.sage.summoned") : tr("inv.sage.dismissed");
+        return `<div class="sage-badge ${cls}"><strong>${esc(tr("inv.sage." + s.id))}</strong><span>${esc(stTxt)}</span></div>`;
       })
       .join("");
 
     const catsBox = $("inv-cats");
     const pouch = (state.snapshot && state.snapshot.pouch) || {};
     catsBox.innerHTML = "";
-    for (const c of INV_CATS) {
-      const arr = pouch[c.key] || [];
+    for (const cKey of INV_CATS) {
+      const arr = pouch[cKey] || [];
       const btn = document.createElement("button");
-      btn.className = "pill" + (state.invCat === c.key ? " active" : "");
-      btn.textContent = `${c.label} (${arr.length})`;
+      btn.className = "pill" + (state.invCat === cKey ? " active" : "");
+      btn.textContent = `${tr("inv.cat." + cKey)} (${arr.length})`;
       btn.onclick = () => {
-        state.invCat = c.key;
+        state.invCat = cKey;
         state.invSelected = null;
         renderInventory();
       };
@@ -1114,7 +1030,7 @@
     const grid = $("inv-grid");
     grid.innerHTML = "";
     if (!list.length) {
-      grid.innerHTML = `<div class="empty-hint" style="grid-column:1/-1;padding:24px">Nenhum item nesta categoria.</div>`;
+      grid.innerHTML = `<div class="empty-hint" style="grid-column:1/-1;padding:24px">${esc(tr("inv.emptyCat"))}</div>`;
     } else {
       for (const it of list) {
         const meta = itemInfo(it.name);
@@ -1122,11 +1038,11 @@
         const card = document.createElement("div");
         const isSel = state.invSelected && state.invSelected.slot === it.slot && state.invSelected.name === it.name;
         card.className = "inv-card" + (it.equipped ? " equipped" : "") + (isSel ? " selected" : "");
-        const topBadge = it.equipped ? "E" : it.effect && it.effect.type ? (EFFECT_PT[it.effect.type] || it.effect.type) : "";
+        const topBadge = it.equipped ? "E" : it.effect && it.effect.type ? (tr("effect." + it.effect.type) || it.effect.type) : "";
         const bottomBadge = typeof it.count === "number" ? `x${it.count}` : typeof it.life === "number" ? `🛡 ${it.life}` : "";
         card.innerHTML = `
           ${topBadge ? `<span class="inv-badge-tl">${esc(topBadge)}</span>` : ""}
-          ${fuseMeta ? `<span class="inv-fuse-dot" title="Acoplado: ${esc(fuseMeta.name)}"><img src="/api/icon/item/${esc(fuseMeta.icon)}.png" alt="" onerror="this.style.display='none'"/></span>` : ""}
+          ${fuseMeta ? `<span class="inv-fuse-dot" title="${esc(tr("inv.stat.fused"))}: ${esc(fuseMeta.name)}"><img src="/api/icon/item/${esc(fuseMeta.icon)}.png" alt="" onerror="this.style.display='none'"/></span>` : ""}
           <img src="/api/icon/item/${esc(meta.icon)}.png" alt="" onerror="this.style.opacity='0.25'" />
           ${bottomBadge ? `<span class="inv-badge-br">${esc(bottomBadge)}</span>` : ""}
           <div class="inv-card-name">${esc(meta.name)}</div>
@@ -1147,23 +1063,23 @@
     const it = state.invSelected;
     if (!it) {
       panel.className = "detail-panel empty";
-      panel.innerHTML = `<div class="empty-hint">Selecione um item da bolsa para ver atributos, acoplamentos e descrição.</div>`;
+      panel.innerHTML = `<div class="empty-hint">${esc(tr("inv.emptyHint"))}</div>`;
       return;
     }
     panel.className = "detail-panel";
     const meta = itemInfo(it.name);
     const fuseMeta = it.fuse ? itemInfo(it.fuse) : null;
     const rows = [];
-    if (it.equipped) rows.push(["Estado", "Equipado"]);
-    if (typeof it.life === "number") rows.push(["Durabilidade", it.life]);
-    if (typeof it.count === "number") rows.push(["Quantidade", it.count]);
-    if (fuseMeta) rows.push(["Acoplado", `${fuseMeta.name}${it.fuseLife ? ` (+${it.fuseLife})` : ""}`]);
-    if (it.effect && it.effect.type) rows.push(["Bônus", `${EFFECT_PT[it.effect.type] || it.effect.type} (${it.effect.value})`]);
-    if (typeof it.heal === "number" && it.heal > 0) rows.push(["Cura", `${(it.heal / 4).toFixed(2).replace(/\.00$/, "")} corações`]);
-    if (typeof it.effect === "string") rows.push(["Efeito", `${it.effect} Nv.${it.level || 1}`]);
-    if (it.color) rows.push(["Tintura", it.color]);
-    if (it.materials && it.materials.length) rows.push(["Ingredientes", it.materials.map((m) => itemInfo(m).name).join(", ")]);
-    if (meta.sell) rows.push(["Venda", `${meta.sell} rupees`]);
+    if (it.equipped) rows.push([tr("inv.stat.state"), tr("inv.stat.equipped")]);
+    if (typeof it.life === "number") rows.push([tr("inv.stat.life"), it.life]);
+    if (typeof it.count === "number") rows.push([tr("inv.stat.qty"), it.count]);
+    if (fuseMeta) rows.push([tr("inv.stat.fused"), `${fuseMeta.name}${it.fuseLife ? ` (+${it.fuseLife})` : ""}`]);
+    if (it.effect && it.effect.type) rows.push([tr("inv.stat.bonus"), `${tr("effect." + it.effect.type) || it.effect.type} (${it.effect.value})`]);
+    if (typeof it.heal === "number" && it.heal > 0) rows.push([tr("wiki.stat.heal"), tr("wiki.stat.heartsUnit", { n: (it.heal / 4).toFixed(2).replace(/\.00$/, "") })]);
+    if (typeof it.effect === "string") rows.push([tr("inv.stat.effect"), tr("inv.stat.effectLv", { eff: it.effect, lv: it.level || 1 })]);
+    if (it.color) rows.push([tr("inv.stat.dye"), it.color]);
+    if (it.materials && it.materials.length) rows.push([tr("inv.stat.ingredients"), it.materials.map((m) => itemInfo(m).name).join(", ")]);
+    if (meta.sell) rows.push([tr("wiki.stat.sell"), `${meta.sell} ${tr("detail.currencyRupees")}`]);
 
     panel.innerHTML = `
       <div class="detail-head">
@@ -1172,7 +1088,7 @@
       <div class="detail-hero">
         <img src="/api/icon/item/${esc(meta.icon)}.png" alt="" />
       </div>
-      <div class="detail-desc">${esc(meta.caption || "Sem descrição.")}</div>
+      <div class="detail-desc">${esc(meta.caption || tr("inv.stat.noDesc"))}</div>
       <div class="kv-list">
         ${rows.map(([k, v]) => `<div class="kv-row"><span>${esc(k)}</span><strong>${esc(v)}</strong></div>`).join("")}
       </div>
@@ -1183,12 +1099,12 @@
   function renderQuests() {
     const catBar = $("quest-cat-pills");
     catBar.innerHTML = "";
-    for (const c of QUEST_CATS) {
+    for (const cKey of QUEST_CATS) {
       const btn = document.createElement("button");
-      btn.className = "pill" + (state.questCat === c.key ? " active" : "");
-      btn.textContent = c.label;
+      btn.className = "pill" + (state.questCat === cKey ? " active" : "");
+      btn.textContent = tr("quest.cat." + cKey);
       btn.onclick = () => {
-        state.questCat = c.key;
+        state.questCat = cKey;
         renderQuests();
       };
       catBar.appendChild(btn);
@@ -1196,12 +1112,12 @@
 
     const stBar = $("quest-status-pills");
     stBar.innerHTML = "";
-    for (const s of QUEST_STATUSES) {
+    for (const sKey of QUEST_STATUSES) {
       const btn = document.createElement("button");
-      btn.className = "pill" + (state.questStatus === s.key ? " active" : "");
-      btn.textContent = s.label;
+      btn.className = "pill" + (state.questStatus === sKey ? " active" : "");
+      btn.textContent = tr("quest.st." + sKey);
       btn.onclick = () => {
-        state.questStatus = s.key;
+        state.questStatus = sKey;
         renderQuests();
       };
       stBar.appendChild(btn);
@@ -1234,7 +1150,7 @@
     const listEl = $("quest-list");
     listEl.innerHTML = "";
     if (!filtered.length) {
-      listEl.innerHTML = `<div class="empty-hint" style="padding:24px">Nenhuma missão encontrada com estes filtros.</div>`;
+      listEl.innerHTML = `<div class="empty-hint" style="padding:24px">${esc(tr("quest.none"))}</div>`;
     } else {
       for (const q of filtered) {
         const st = states[q.id] || { status: "locked" };
@@ -1245,7 +1161,7 @@
             <div class="quest-title">${esc(q.name)}</div>
             <div class="quest-meta">${esc(q.region || "Hyrule")}${q.giver ? ` · ${esc(q.giver)}` : ""}</div>
           </div>
-          <span class="status-tag ${esc(st.status)}">${esc(QUEST_STATUS_LABELS[st.status] || st.status)}</span>
+          <span class="status-tag ${esc(st.status)}">${esc(tr("quest.st." + st.status) || st.status)}</span>
         `;
         row.onclick = () => {
           state.questSelected = q.id;
@@ -1264,7 +1180,7 @@
     const q = quests.find((x) => x.id === state.questSelected);
     if (!q) {
       panel.className = "detail-panel empty";
-      panel.innerHTML = `<div class="empty-hint">Escolha uma missão no Diário de Aventura para ver os passos e o destino no mapa.</div>`;
+      panel.innerHTML = `<div class="empty-hint">${esc(tr("quest.emptyHint"))}</div>`;
       return;
     }
     panel.className = "detail-panel";
@@ -1278,16 +1194,16 @@
           <div class="muted" style="font-size:11px;margin-bottom:4px">${esc(q.region || "Hyrule")}${q.giver ? ` · ${esc(q.giver)}` : ""}</div>
           <h3>${esc(q.name)}</h3>
         </div>
-        <span class="status-tag ${esc(st.status)}">${esc(QUEST_STATUS_LABELS[st.status] || st.status)}</span>
+        <span class="status-tag ${esc(st.status)}">${esc(tr("quest.st." + st.status) || st.status)}</span>
       </div>
-      ${targetPt ? `<button id="btn-quest-map" class="btn btn-gold" style="width:100%;margin-bottom:10px">Ver no Mapa</button>` : ""}
+      ${targetPt ? `<button id="btn-quest-map" class="btn btn-gold" style="width:100%;margin-bottom:10px">${esc(tr("wiki.viewOnMap"))}</button>` : ""}
       <div class="step-list">
         ${(q.steps || [])
           .filter((s) => s.text)
           .map((s, idx) => {
             const isCur = s.name === st.stepName;
             return `<div class="step-box ${isCur ? "current" : ""}">
-              <h4>${isCur ? "▶ Passo Atual" : `Passo ${idx + 1}`}</h4>
+              <h4>${esc(isCur ? tr("quest.currentStep") : tr("quest.stepNum", { n: idx + 1 }))}</h4>
               <div class="detail-desc" style="margin:0">${esc(s.text)}</div>
             </div>`;
           })
@@ -1316,10 +1232,10 @@
     const extra = $("archive-extra-filters");
     extra.innerHTML = "";
     if (state.archiveSub === "compendium") {
-      for (const [k, lbl] of [["all", "Todos"], ["Animal", "Animais"], ["Enemy", "Monstros"], ["Material", "Materiais"], ["Weapon", "Armas"], ["Treasure", "Tesouros"]]) {
+      for (const k of ["all", "Animal", "Enemy", "Material", "Weapon", "Treasure"]) {
         const b = document.createElement("button");
         b.className = "pill" + (state.archiveCat === k ? " active" : "");
-        b.textContent = lbl;
+        b.textContent = tr("arch.cat." + k);
         b.onclick = () => {
           state.archiveCat = k;
           renderArchives();
@@ -1375,7 +1291,7 @@
         card.innerHTML = `
           ${e.has_icon ? `<img src="/api/icon/chara/${esc(e.id)}.png" alt="" loading="lazy" />` : `<div style="height:96px"></div>`}
           <div class="arch-title">${esc(unlocked ? e.name : "???")}</div>
-          <div class="arch-sub">${esc(unlocked ? e.alias || e.race : "Bloqueado")}</div>
+          <div class="arch-sub">${esc(unlocked ? e.alias || e.race : tr("arch.profileLocked"))}</div>
         `;
         card.onclick = () => {
           state.archiveSelected = `cd:${e.id}`;
@@ -1398,7 +1314,7 @@
         card.className = "arch-card" + (!unlocked ? " locked" : "") + (state.archiveSelected === `rc:${e.id}` ? " selected" : "");
         card.innerHTML = `
           <img src="/api/icon/item/${esc(e.icon)}.png" alt="" loading="lazy" />
-          <div class="arch-title">#${e.index} ${esc(unlocked ? e.name : "Receita desconhecida")}</div>
+          <div class="arch-title">#${e.index} ${esc(unlocked ? e.name : tr("arch.recipeUnknown"))}</div>
         `;
         card.onclick = () => {
           state.archiveSelected = `rc:${e.id}`;
@@ -1420,8 +1336,8 @@
         const card = document.createElement("div");
         card.className = "arch-card" + (!unlocked ? " locked" : "") + (state.archiveSelected === `mm:${e.id}` ? " selected" : "");
         card.innerHTML = `
-          <div class="arch-sub">Memória #${e.index}</div>
-          <div class="arch-title">${esc(unlocked ? e.title : "Memória bloqueada")}</div>
+          <div class="arch-sub">${esc(tr("arch.memorySub", { n: e.index }))}</div>
+          <div class="arch-title">${esc(unlocked ? e.title : tr("arch.memoryLockedSub"))}</div>
         `;
         card.onclick = () => {
           state.archiveSelected = `mm:${e.id}`;
@@ -1438,12 +1354,12 @@
         card.className = "arch-card album-card";
         card.innerHTML = `
           <img src="/api/album/${esc(ph.thumb || ph.filename)}" alt="" loading="lazy" />
-          <div class="arch-title">Foto #${ph.index + 1}</div>
+          <div class="arch-title">${esc(tr("arch.photoTitle", { n: ph.index + 1 }))}</div>
           <div class="arch-sub">${esc(ph.location || "")}</div>
         `;
         card.onclick = () => {
           $("lightbox-img").src = `/api/album/${esc(ph.filename)}`;
-          $("lightbox-caption").textContent = `Foto #${ph.index + 1}${ph.location ? ` · ${ph.location}` : ""}`;
+          $("lightbox-caption").textContent = `${tr("arch.photoTitle", { n: ph.index + 1 })}${ph.location ? ` · ${ph.location}` : ""}`;
           $("photo-lightbox").classList.remove("hidden");
         };
         grid.appendChild(card);
@@ -1451,7 +1367,7 @@
     }
 
     if (!grid.children.length) {
-      grid.innerHTML = `<div class="empty-hint" style="grid-column:1/-1;padding:24px">Nenhum registro encontrado.</div>`;
+      grid.innerHTML = `<div class="empty-hint" style="grid-column:1/-1;padding:24px">${esc(tr("arch.none"))}</div>`;
     }
   }
 
@@ -1459,7 +1375,7 @@
     const panel = $("archive-detail");
     if (!sel) {
       panel.className = "detail-panel empty";
-      panel.innerHTML = `<div class="empty-hint">Selecione um registro para visualizar detalhes completos.</div>`;
+      panel.innerHTML = `<div class="empty-hint">${esc(tr("arch.emptyHint"))}</div>`;
       return;
     }
     panel.className = "detail-panel";
@@ -1468,58 +1384,58 @@
       panel.innerHTML = `
         <div class="detail-head"><h3>#${e.index} ${esc(sel.unlocked ? e.name : "???")}</h3></div>
         ${e.has_icon ? `<div class="detail-hero"><img src="/api/icon/picturebook_detail/${esc(e.id)}.png" onerror="this.src='/api/icon/picturebook/${esc(e.id)}.png'" alt=""/></div>` : ""}
-        <div class="detail-desc">${esc(sel.unlocked ? e.caption : "Ainda não fotografado na Enciclopédia.")}</div>
-        ${sel.unlocked && e.locations && e.locations.length ? `<div class="kv-list"><div class="kv-row"><span>Locais</span><strong>${esc(e.locations.join(", "))}</strong></div></div>` : ""}
+        <div class="detail-desc">${esc(sel.unlocked ? e.caption : tr("arch.pbLockedDesc"))}</div>
+        ${sel.unlocked && e.locations && e.locations.length ? `<div class="kv-list"><div class="kv-row"><span>${esc(tr("arch.locations"))}</span><strong>${esc(e.locations.join(", "))}</strong></div></div>` : ""}
       `;
     } else if (sel.type === "profile") {
       panel.innerHTML = `
         <div class="detail-head"><div><div class="muted" style="font-size:11px">${esc(e.alias || e.race)}</div><h3>${esc(sel.unlocked ? e.name : "???")}</h3></div></div>
         ${e.has_icon ? `<div class="detail-hero"><img src="/api/icon/chara_pic/${esc(e.id)}.png" onerror="this.src='/api/icon/chara/${esc(e.id)}.png'" alt=""/></div>` : ""}
-        <div class="detail-desc">${esc(sel.unlocked ? e.caption : "Personagem ainda não desbloqueado no Guia.")}</div>
+        <div class="detail-desc">${esc(sel.unlocked ? e.caption : tr("arch.profileLockedDesc"))}</div>
       `;
     } else if (sel.type === "recipe") {
       panel.innerHTML = `
-        <div class="detail-head"><h3>#${e.index} ${esc(sel.unlocked ? e.name : "Receita desconhecida")}</h3></div>
+        <div class="detail-head"><h3>#${e.index} ${esc(sel.unlocked ? e.name : tr("arch.recipeUnknown"))}</h3></div>
         <div class="detail-hero"><img src="/api/icon/item/${esc(e.icon)}.png" alt=""/></div>
-        <div class="detail-desc">${esc(sel.unlocked ? e.caption : "Cozinhe esta receita no jogo para desbloquear.")}</div>
+        <div class="detail-desc">${esc(sel.unlocked ? e.caption : tr("arch.recipeLockedDesc"))}</div>
       `;
     } else if (sel.type === "memory") {
       panel.innerHTML = `
-        <div class="detail-head"><h3>Memória #${e.index}: ${esc(sel.unlocked ? e.title : "Bloqueada")}</h3></div>
-        <div class="detail-desc">${esc(sel.unlocked ? e.caption : "Encontre esta memória em Hyrule para desbloquear.")}</div>
+        <div class="detail-head"><h3>${esc(tr("arch.memoryTitle", { n: e.index, title: sel.unlocked ? e.title : tr("arch.memoryLocked") }))}</h3></div>
+        <div class="detail-desc">${esc(sel.unlocked ? e.caption : tr("arch.memoryLockedDesc"))}</div>
       `;
     }
   }
 
   // ---------------- Por Perto (Radar) & Filtro Wiki ----------------
   const POI_WEIGHTS = {
-    towers: 120,
+    skyview_towers: 120,
     shrines: 115,
     lightroots: 115,
     great_fairies: 110,
-    geoglyphs: 110,
-    hinox: 102,
-    talus: 102,
-    molduga: 102,
-    flux_construct: 102,
-    frox: 102,
-    gleeok: 102,
-    lynel: 102,
+    dragon_tears: 110,
+    hinoxes: 102,
+    taluses: 102,
+    moldugas: 102,
+    flux_constructs: 102,
+    froxes: 102,
+    gleeoks: 102,
+    lynels: 102,
     armor_chests: 98,
-    sage_wills: 98,
+    sages_wills: 98,
     old_maps: 96,
     schema_stones: 96,
-    yiga_schemas: 96,
+    yiga_schematics: 96,
     stables: 92,
     shops: 92,
     dispensers: 92,
     chasms: 90,
     caves: 86,
-    bubbulfrogs: 86,
+    bubbuls: 86,
     wells: 84,
     hidden_koroks: 78,
     carry_koroks: 78,
-    addison: 78,
+    addison_signposts: 78,
     treasure_chests: 70,
     locations: 62,
   };
@@ -1529,13 +1445,7 @@
     animals: 34,
     plants: 24,
   };
-  const NEARBY_CHIPS = [
-    { key: "all", label: "Tudo" },
-    { key: "poi", label: "POIs" },
-    { key: "npcs", label: "NPCs" },
-    { key: "enemies", label: "Inimigos" },
-    { key: "resources", label: "Coleta" },
-  ];
+  const NEARBY_CHIP_KEYS = ["all", "poi", "npcs", "enemies", "resources"];
 
   function applyWikiMapFilter(filter) {
     state.wikiFilter = filter || null;
@@ -1547,7 +1457,7 @@
       banner.innerHTML = "";
       return;
     }
-    banner.innerHTML = `<span>Destacando no mapa: <strong>${esc(filter.label)}</strong></span><button id="btn-clear-wiki-filter" title="Remover destaque">✕</button>`;
+    banner.innerHTML = `<span>${esc(tr("wiki.highlightBanner"))} <strong>${esc(filter.label)}</strong></span><button id="btn-clear-wiki-filter" title="${esc(tr("wiki.clearHighlightTitle"))}">✕</button>`;
     banner.classList.remove("hidden");
     const clr = $("btn-clear-wiki-filter");
     if (clr) {
@@ -1607,7 +1517,7 @@
             dist: d,
             score: 140 / (d + 35),
             title: q.name,
-            sub: "Missão Ativa",
+            sub: tr("detail.activeQuest"),
             icon: "quest",
             done: false,
             onClick: () => {
@@ -1630,7 +1540,7 @@
         const dArr = doneMap[meta.key] || [];
         const fArr = foundMap[meta.key] || [];
         const w = POI_WEIGHTS[meta.key] || 65;
-        const isEnemyPoi = ["hinox", "talus", "molduga", "flux_construct", "frox", "gleeok", "lynel"].includes(meta.key);
+        const isEnemyPoi = ["hinoxes", "taluses", "moldugas", "flux_constructs", "froxes", "gleeoks", "lynels"].includes(meta.key);
         for (let i = 0; i < list.length; i++) {
           const o = list[i];
           const p = o.position;
@@ -1680,7 +1590,7 @@
             dist: d,
             score: effW / (d + 35),
             title: ent[5] > 1 && !hasQ ? `${nm} (×${ent[5]})` : nm,
-            sub: hasQ ? `Missão: ${availQuests[0].name}` : meta.singular,
+            sub: hasQ ? tr("nearby.questSub", { name: availQuests[0].name }) : meta.singular,
             icon: hasQ ? "entity_npc_quest" : meta.icon,
             done: false,
             onClick: () => selectEntityOnMap(meta, i, ent, lyr, 0.65),
@@ -1700,14 +1610,14 @@
     panel.innerHTML = `
       <div class="detail-head" style="margin-bottom:4px">
         <div>
-          <div class="muted" style="font-size:11px;margin-bottom:2px">Radar · Raio ${radius} m · ${esc(layerLabel)}</div>
-          <h3>Por Perto (${filtered.length})</h3>
+          <div class="muted" style="font-size:11px;margin-bottom:2px">${esc(tr("nearby.header", { r: radius, layer: layerLabel }))}</div>
+          <h3>${esc(tr("nearby.title", { n: filtered.length }))}</h3>
         </div>
-        <button class="icon-btn" id="btn-close-nearby" title="Fechar Por Perto">✕</button>
+        <button class="icon-btn" id="btn-close-nearby" title="${esc(tr("nearby.closeTitle"))}">✕</button>
       </div>
-      <div class="nearby-sub">${ref.isLink ? "Ordenado por relevância e distância do Link" : "Posição do centro do mapa"}</div>
+      <div class="nearby-sub">${esc(ref.isLink ? tr("nearby.subLink") : tr("nearby.subCam"))}</div>
       <div class="nearby-chips">
-        ${NEARBY_CHIPS.map((c) => `<button class="nearby-chip${state.nearbyFilter === c.key ? " active" : ""}" data-nchip="${c.key}">${esc(c.label)}</button>`).join("")}
+        ${NEARBY_CHIP_KEYS.map((ck) => `<button class="nearby-chip${state.nearbyFilter === ck ? " active" : ""}" data-nchip="${ck}">${esc(tr("nearby.chip." + ck))}</button>`).join("")}
       </div>
       <div class="nearby-list"></div>
     `;
@@ -1731,7 +1641,7 @@
 
     const listEl = panel.querySelector(".nearby-list");
     if (!filtered.length) {
-      listEl.innerHTML = `<div class="empty-hint" style="padding:24px 8px">Nada encontrado neste filtro dentro de ${radius} m.</div>`;
+      listEl.innerHTML = `<div class="empty-hint" style="padding:24px 8px">${esc(tr("nearby.empty", { r: radius }))}</div>`;
     } else {
       for (const it of filtered) {
         const row = document.createElement("div");
@@ -1739,7 +1649,7 @@
         const iconHtml =
           it.icon === "quest"
             ? `<span style="width:24px;height:24px;border-radius:50%;background:#e5c365;color:#111a21;display:inline-flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;flex-shrink:0">!</span>`
-            : `<img src="/api/icon/map/${esc(it.icon)}.png?v=4" alt="" onerror="this.style.opacity='0.25'" />`;
+            : `<img src="/api/icon/map/${esc(it.icon)}.png?v=5" alt="" onerror="this.style.opacity='0.25'" />`;
         row.innerHTML = `
           ${iconHtml}
           <div class="nearby-row-main">
@@ -1818,12 +1728,12 @@
     const chkRanks = $("chk-wiki-all-ranks");
     if (chkRanks) chkRanks.checked = Boolean(state.wikiAllRanks);
     catsBox.innerHTML = "";
-    for (const c of WIKI_CATS) {
+    for (const cKey of WIKI_CATS) {
       const btn = document.createElement("button");
-      btn.className = "pill" + (state.wikiCat === c.key ? " active" : "");
-      btn.textContent = c.label;
+      btn.className = "pill" + (state.wikiCat === cKey ? " active" : "");
+      btn.textContent = tr("wiki.cat." + cKey);
       btn.onclick = () => {
-        state.wikiCat = c.key;
+        state.wikiCat = cKey;
         renderWiki();
       };
       catsBox.appendChild(btn);
@@ -1864,7 +1774,7 @@
     const shown = list.slice(0, MAX_CARDS);
 
     if (!shown.length) {
-      grid.innerHTML = `<div class="empty-hint" style="grid-column:1/-1;padding:24px">Nenhum item encontrado com esses filtros.</div>`;
+      grid.innerHTML = `<div class="empty-hint" style="grid-column:1/-1;padding:24px">${esc(tr("wiki.none"))}</div>`;
     } else {
       for (const it of shown) {
         const card = document.createElement("div");
@@ -1880,7 +1790,7 @@
           ${badgeText ? `<span class="wiki-badge-power">${esc(badgeText)}</span>` : ""}
           <img src="/api/icon/item/${esc(it.icon || it.id)}.png" alt="" loading="lazy" onerror="this.style.opacity='0.25'" />
           <div class="wiki-card-name">${esc(it.name || it.id)}</div>
-          <div class="wiki-card-sub">${srcCount > 0 ? `${srcCount} fonte(s)` : esc(it.category || "Item")}</div>
+          <div class="wiki-card-sub">${srcCount > 0 ? esc(tr("wiki.sourcesCount", { n: srcCount })) : esc(it.category || "Item")}</div>
         `;
         card.onclick = () => {
           state.wikiSelected = it.id;
@@ -1892,7 +1802,7 @@
         const note = document.createElement("div");
         note.className = "empty-hint";
         note.style.cssText = "grid-column:1/-1;padding:12px;font-size:12px";
-        note.textContent = `Mostrando ${MAX_CARDS} de ${list.length} itens. Use a busca acima para refinar.`;
+        note.textContent = tr("wiki.truncated", { shown: MAX_CARDS, total: list.length });
         grid.appendChild(note);
       }
     }
@@ -1906,63 +1816,63 @@
     if (!panel) return;
     if (!entry) {
       panel.className = "detail-panel empty";
-      panel.innerHTML = `<div class="empty-hint">Selecione um item do Catálogo para ver atributos e onde encontrá-lo em Hyrule.</div>`;
+      panel.innerHTML = `<div class="empty-hint">${esc(tr("wiki.emptyHint"))}</div>`;
       return;
     }
     panel.className = "detail-panel";
 
     const rows = [];
-    if (entry.category) rows.push(["Categoria", entry.category]);
-    if (entry.power > 0) rows.push([entry.category === "Armor" ? "Defesa Base" : "Poder", entry.power]);
-    if (entry.heal > 0) rows.push(["Cura", `${(entry.heal / 4).toFixed(2).replace(/\.00$/, "")} corações`]);
-    if (entry.buy > 0) rows.push(["Compra base", `${entry.buy} rupees`]);
-    if (entry.sell > 0) rows.push(["Venda", `${entry.sell} rupees`]);
-    if (entry.rank > 1) rows.push(["Nível de aprimoramento", `★${entry.rank - 1}`]);
+    if (entry.category) rows.push([tr("wiki.stat.cat"), entry.category]);
+    if (entry.power > 0) rows.push([entry.category === "Armor" ? tr("wiki.stat.def") : tr("wiki.stat.pwr"), entry.power]);
+    if (entry.heal > 0) rows.push([tr("wiki.stat.heal"), tr("wiki.stat.heartsUnit", { n: (entry.heal / 4).toFixed(2).replace(/\.00$/, "") })]);
+    if (entry.buy > 0) rows.push([tr("wiki.stat.buy"), `${entry.buy} ${tr("detail.currencyRupees")}`]);
+    if (entry.sell > 0) rows.push([tr("wiki.stat.sell"), `${entry.sell} ${tr("detail.currencyRupees")}`]);
+    if (entry.rank > 1) rows.push([tr("wiki.stat.rank"), `★${entry.rank - 1}`]);
 
     const src = entry.sources || {};
     let sourcesHtml = "";
 
     if (src.shops && src.shops.length) {
-      sourcesHtml += `<div class="source-section"><h4>À Venda em Lojas (${src.shops.length})</h4>`;
+      sourcesHtml += `<div class="source-section"><h4>${esc(tr("wiki.src.shops", { n: src.shops.length }))}</h4>`;
       src.shops.forEach((s, idx) => {
         sourcesHtml += `
           <div class="source-row">
             <div class="source-row-main">
               <div class="source-row-title">${esc(s.name)}${s.sub ? ` · ${esc(s.sub)}` : ""}</div>
-              <div class="source-row-sub">${esc(formatShopPrice(s))}${s.bundle > 1 ? ` (pacote ×${s.bundle})` : ""}</div>
+              <div class="source-row-sub">${esc(formatShopPrice(s))}${s.bundle > 1 ? esc(tr("wiki.src.bundle", { n: s.bundle })) : ""}</div>
             </div>
-            <button class="mini-map-btn" data-src-shop="${idx}">Ver no Mapa</button>
+            <button class="mini-map-btn" data-src-shop="${idx}">${esc(tr("wiki.viewOnMap"))}</button>
           </div>`;
       });
       sourcesHtml += `</div>`;
     }
 
     if (src.chests && src.chests.length) {
-      const totalLbl = src.chest_total && src.chest_total > src.chests.length ? `${src.chests.length} de ${src.chest_total}` : `${src.chests.length}`;
-      sourcesHtml += `<div class="source-section"><h4>Baús (${totalLbl})</h4>`;
+      const totalLbl = src.chest_total && src.chest_total > src.chests.length ? tr("wiki.src.chestsPartial", { shown: src.chests.length, total: src.chest_total }) : `${src.chests.length}`;
+      sourcesHtml += `<div class="source-section"><h4>${esc(tr("wiki.src.chests", { label: totalLbl }))}</h4>`;
       src.chests.forEach((c, idx) => {
         sourcesHtml += `
           <div class="source-row">
             <div class="source-row-main">
-              <div class="source-row-title">${esc(c.kind || "Baú")}</div>
+              <div class="source-row-title">${esc(c.kind || tr("wiki.src.chestDefault"))}</div>
               <div class="source-row-sub">${esc(window.PurahMap.LAYER_LABELS[c.layer] || c.layer)} · X:${c.x}, Z:${c.z}</div>
             </div>
-            <button class="mini-map-btn" data-src-chest="${idx}">Ver no Mapa</button>
+            <button class="mini-map-btn" data-src-chest="${idx}">${esc(tr("wiki.viewOnMap"))}</button>
           </div>`;
       });
       sourcesHtml += `</div>`;
     }
 
     if (src.dispensers && src.dispensers.length) {
-      sourcesHtml += `<div class="source-section"><h4>Dispensadores Zonai (${src.dispensers.length})</h4>`;
+      sourcesHtml += `<div class="source-section"><h4>${esc(tr("wiki.src.dispensers", { n: src.dispensers.length }))}</h4>`;
       src.dispensers.forEach((d, idx) => {
         sourcesHtml += `
           <div class="source-row">
             <div class="source-row-main">
-              <div class="source-row-title">Dispensador Zonai</div>
+              <div class="source-row-title">${esc(tr("wiki.src.dispenserName"))}</div>
               <div class="source-row-sub">${esc(window.PurahMap.LAYER_LABELS[d.layer] || d.layer)} · X:${d.x}, Z:${d.z}</div>
             </div>
-            <button class="mini-map-btn" data-src-disp="${idx}">Ver no Mapa</button>
+            <button class="mini-map-btn" data-src-disp="${idx}">${esc(tr("wiki.viewOnMap"))}</button>
           </div>`;
       });
       sourcesHtml += `</div>`;
@@ -1971,13 +1881,13 @@
     if (src.world && src.world.count > 0) {
       sourcesHtml += `
         <div class="source-section">
-          <h4>Coleta no Mundo</h4>
+          <h4>${esc(tr("wiki.src.world"))}</h4>
           <div class="source-row">
             <div class="source-row-main">
               <div class="source-row-title">${esc(src.world.name)}</div>
-              <div class="source-row-sub">${src.world.count} locais em Hyrule</div>
+              <div class="source-row-sub">${esc(tr("wiki.src.worldCount", { n: src.world.count }))}</div>
             </div>
-            <button class="mini-map-btn" id="btn-wiki-world-map">Ver no Mapa</button>
+            <button class="mini-map-btn" id="btn-wiki-world-map">${esc(tr("wiki.viewOnMap"))}</button>
           </div>
         </div>`;
     }
@@ -1985,22 +1895,22 @@
     if (src.drops && src.drops.length) {
       sourcesHtml += `
         <div class="source-section">
-          <h4>Drop de Monstros</h4>
+          <h4>${esc(tr("wiki.src.drops"))}</h4>
           <div class="detail-desc" style="margin-bottom:8px">${src.drops.map(esc).join(" · ")}</div>
-          <button class="btn btn-gold" id="btn-wiki-drops-map" style="width:100%">Ver monstros no Mapa</button>
+          <button class="btn btn-gold" id="btn-wiki-drops-map" style="width:100%">${esc(tr("wiki.src.viewMonsters"))}</button>
         </div>`;
     }
 
     if (src.regions && src.regions.length) {
       sourcesHtml += `
         <div class="source-section">
-          <h4>Regiões Típicas</h4>
+          <h4>${esc(tr("wiki.src.regions"))}</h4>
           <div class="detail-desc" style="margin-bottom:0">${src.regions.map(esc).join(" · ")}</div>
         </div>`;
     }
 
     if (!sourcesHtml) {
-      sourcesHtml = `<div class="source-section"><div class="muted" style="font-size:12px">Obtido por missão, baú específico ou progressão de história.</div></div>`;
+      sourcesHtml = `<div class="source-section"><div class="muted" style="font-size:12px">${esc(tr("wiki.src.none"))}</div></div>`;
     }
 
     panel.innerHTML = `
@@ -2013,7 +1923,7 @@
       <div class="detail-hero">
         <img src="/api/icon/item/${esc(entry.icon || entry.id)}.png" alt="" onerror="this.style.opacity='0.25'" />
       </div>
-      <div class="detail-desc">${esc(entry.caption || "Sem descrição.")}</div>
+      <div class="detail-desc">${esc(entry.caption || tr("inv.stat.noDesc"))}</div>
       ${
         rows.length
           ? `<div class="kv-list">${rows.map(([k, v]) => `<div class="kv-row"><span>${esc(k)}</span><strong>${esc(v)}</strong></div>`).join("")}</div>`
@@ -2124,35 +2034,70 @@
     } catch (_) {}
   }
 
+  function applyLanguageFromStatus(st) {
+    if (!window.PurahI18n || !st || !st.lang) return;
+    const changed = state.activeLang !== st.lang;
+    state.activeLang = st.lang;
+    window.PurahI18n.setLang(st.lang);
+    if (changed || !state.i18nApplied) {
+      state.i18nApplied = true;
+      window.PurahI18n.applyDom();
+      applyModeUI();
+      syncLayerButtons(mapCtrl.layer);
+      renderHud(state.live || state.snapshot);
+      if (state.staticLoaded) renderCategoryList();
+      mapCtrl.dirty = true;
+    }
+  }
+
   async function checkSetupAndBoot() {
     const st = await apiJson("/api/status");
     state.status = st;
+    applyLanguageFromStatus(st);
     const b = st.build || {};
     if (b.state === "ready") {
       $("setup-overlay").classList.add("hidden");
       await loadStaticData();
       await refreshSnapshot();
+      switchTab(state.activeTab);
       try {
         state.footprint = await apiJson("/api/footprint");
         mapCtrl.setData({ footprint: state.footprint });
       } catch (_) {}
-      connectStream();
-      setInterval(refreshSnapshot, 1800);
-      setInterval(async () => {
-        try {
-          state.footprint = await apiJson("/api/footprint");
-          mapCtrl.setData({ footprint: state.footprint });
-        } catch (_) {}
-      }, 10000);
+      if (!state.streamStarted) {
+        state.streamStarted = true;
+        connectStream();
+      }
+      if (!state.pollTimersStarted) {
+        state.pollTimersStarted = true;
+        setInterval(refreshSnapshot, 1800);
+        setInterval(async () => {
+          try {
+            const st2 = await apiJson("/api/status");
+            const b2 = st2.build || {};
+            if ((b2.state === "building" || (st2.lang && state.activeLang && st2.lang !== state.activeLang)) && !state.reloadingLang) {
+              state.reloadingLang = true;
+              state.staticLoaded = false;
+              state.entitiesData = null;
+              state.entitiesPromise = null;
+              checkSetupAndBoot().finally(() => { state.reloadingLang = false; });
+              return;
+            }
+            applyLanguageFromStatus(st2);
+            state.footprint = await apiJson("/api/footprint");
+            mapCtrl.setData({ footprint: state.footprint });
+          } catch (_) {}
+        }, 10000);
+      }
       return;
     }
 
     $("setup-overlay").classList.remove("hidden");
     const pct = b.total > 0 ? Math.round((b.progress / b.total) * 100) : 10;
     $("setup-bar").style.width = `${pct}%`;
-    $("setup-message").textContent = b.message || "Preparando...";
+    $("setup-message").textContent = b.message || tr("setup.preparing");
     if (b.state === "error") {
-      $("setup-detail").textContent = b.error || "Erro desconhecido";
+      $("setup-detail").textContent = b.error || tr("setup.unknownError");
       $("setup-retry").classList.remove("hidden");
     } else {
       $("setup-detail").textContent = `${pct}%`;
@@ -2327,11 +2272,42 @@
 
   $("btn-settings").onclick = async () => {
     const st = await apiJson("/api/status");
+    const selLang = $("sel-lang");
+    if (selLang) {
+      const langs = st.supported_languages || [];
+      selLang.innerHTML = `<option value="auto">${esc(tr("settings.langAuto"))}</option>` +
+        langs.map((l) => `<option value="${esc(l.code)}">${esc(l.code)} — ${esc(l.label)}</option>`).join("");
+      selLang.value = st.lang_setting || "auto";
+      selLang.onchange = async () => {
+        selLang.disabled = true;
+        $("settings-modal").classList.add("hidden");
+        try {
+          await apiJson("/api/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lang: selLang.value }),
+          });
+          state.staticLoaded = false;
+          state.entitiesData = null;
+          state.entitiesPromise = null;
+          state.i18nApplied = false;
+          state.activeLang = null;
+          checkSetupAndBoot();
+        } finally {
+          selLang.disabled = false;
+        }
+      };
+    }
+    const hint = $("settings-lang-hint");
+    if (hint) {
+      const srcKey = "settings.src." + (st.lang_source || "default");
+      hint.textContent = tr("settings.langHint", { code: st.lang || "USen", src: tr(srcKey) });
+    }
     $("settings-info").innerHTML = `
-      <div class="kv-row"><span>Pasta do Jogo</span><strong>${esc(st.game_dir)}</strong></div>
-      <div class="kv-row"><span>Save Ativo</span><strong>${esc(st.save_slot || "Nenhum")}</strong></div>
-      <div class="kv-row"><span>Modo de Conexão</span><strong>${esc(st.connection_mode)}</strong></div>
-      ${st.lan_url ? `<div class="kv-row"><span>Acesso Celular / LAN</span><strong>${esc(st.lan_url)}</strong></div>` : ""}
+      <div class="kv-row"><span>${esc(tr("settings.gameDir"))}</span><strong>${esc(st.game_dir)}</strong></div>
+      <div class="kv-row"><span>${esc(tr("settings.saveSlot"))}</span><strong>${esc(st.save_slot || tr("settings.saveNone"))}</strong></div>
+      <div class="kv-row"><span>${esc(tr("settings.connMode"))}</span><strong>${esc(st.connection_mode)}</strong></div>
+      ${st.lan_url ? `<div class="kv-row"><span>${esc(tr("settings.lanUrl"))}</span><strong>${esc(st.lan_url)}</strong></div>` : ""}
     `;
     $("settings-modal").classList.remove("hidden");
   };

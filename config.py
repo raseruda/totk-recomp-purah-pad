@@ -1,8 +1,11 @@
 """Configuração global do Purah Pad (Segunda Tela para TotK Recomp)."""
 from __future__ import annotations
 
+import ctypes
 import json
+import locale
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -23,12 +26,31 @@ ENTITIES_PATH = CACHE_DIR / "entities.json"
 QUESTS_PATH = CACHE_DIR / "quests.json"
 CATALOG_PATH = CACHE_DIR / "catalog.json"
 
-CACHE_VERSION = 4
+CACHE_VERSION = 5
 DEFAULT_PORT = 8765
+
+SUPPORTED_LANGUAGES: list[dict[str, str]] = [
+    {"code": "USen", "label": "English (US)"},
+    {"code": "EUen", "label": "English (EU)"},
+    {"code": "USpt", "label": "Português (Brasil)"},
+    {"code": "USes", "label": "Español (Latinoamérica)"},
+    {"code": "EUes", "label": "Español (España)"},
+    {"code": "USfr", "label": "Français (Canada)"},
+    {"code": "EUfr", "label": "Français (France)"},
+    {"code": "EUde", "label": "Deutsch"},
+    {"code": "EUit", "label": "Italiano"},
+    {"code": "EUnl", "label": "Nederlands"},
+    {"code": "EUru", "label": "Русский"},
+    {"code": "JPja", "label": "日本語"},
+    {"code": "KRko", "label": "한국어"},
+    {"code": "CNzh", "label": "简体中文"},
+    {"code": "TWzh", "label": "繁體中文"},
+]
+_ROMFS_LANG_BY_LOWER: dict[str, str] = {x["code"].lower(): x["code"] for x in SUPPORTED_LANGUAGES}
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "game_dir": str(DEFAULT_GAME_DIR),
-    "lang": "USpt",
+    "lang": "auto",
     "port": DEFAULT_PORT,
     "spoiler_free": True,
     "map_mode": "spoiler_free",
@@ -38,6 +60,157 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "follow_link": True,
     "show_heros_path": True,
 }
+
+
+def normalize_locale_to_romfs(raw: str | None) -> str | None:
+    """Converte código de idioma (Switch, Windows/BCP-47 ou RomFS) para o código Mals oficial do TotK."""
+    if not raw:
+        return None
+    clean = str(raw).strip().strip('"').strip("'")
+    if not clean or clean.lower() == "auto":
+        return None
+    clean = clean.split(".", 1)[0].split("@", 1)[0].strip()
+    low = clean.lower()
+    if low in _ROMFS_LANG_BY_LOWER:
+        return _ROMFS_LANG_BY_LOWER[low]
+
+    tag = low.replace("_", "-")
+    parts = [p for p in tag.split("-") if p]
+    if not parts:
+        return None
+    primary = parts[0]
+    sub = parts[1:]
+
+    if primary == "pt":
+        return "USpt"
+    if primary == "en":
+        if any(r in sub for r in ("gb", "uk", "au", "nz", "ie", "eu", "za")):
+            return "EUen"
+        return "USen"
+    if primary == "es":
+        if "es" in sub:
+            return "EUes"
+        return "USes"
+    if primary == "fr":
+        if any(r in sub for r in ("fr", "be", "ch", "lu", "mc")):
+            return "EUfr"
+        return "USfr"
+    if primary == "de":
+        return "EUde"
+    if primary == "it":
+        return "EUit"
+    if primary == "nl":
+        return "EUnl"
+    if primary == "ru":
+        return "EUru"
+    if primary == "ja":
+        return "JPja"
+    if primary == "ko":
+        return "KRko"
+    if primary == "zh":
+        if any(r in sub for r in ("hant", "tw", "hk", "mo")):
+            return "TWzh"
+        return "CNzh"
+    return None
+
+
+def _read_totk_ini_language(ini_path: Path) -> str | None:
+    if not ini_path.is_file():
+        return None
+    try:
+        lines = ini_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return None
+    section = ""
+    found_lang: str | None = None
+    found_locale: str | None = None
+    for raw_line in lines:
+        line = re.split(r"[#;]", raw_line, maxsplit=1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1].strip().lower()
+            continue
+        if "=" not in line:
+            continue
+        if section not in ("", "language"):
+            continue
+        k, v = line.split("=", 1)
+        k_low = k.strip().lower()
+        val = v.strip()
+        if k_low == "lang" and val:
+            found_lang = normalize_locale_to_romfs(val) or found_lang
+        elif k_low == "locale" and val:
+            found_locale = normalize_locale_to_romfs(val) or found_locale
+    return found_lang or found_locale
+
+
+def _read_windows_locale() -> str | None:
+    try:
+        lcid = ctypes.windll.kernel32.GetUserDefaultUILanguage()
+        loc = locale.windows_locale.get(lcid)
+        if loc:
+            norm = normalize_locale_to_romfs(loc)
+            if norm:
+                return norm
+    except Exception:
+        pass
+    try:
+        loc_tuple = locale.getlocale()
+        if loc_tuple and loc_tuple[0]:
+            norm = normalize_locale_to_romfs(loc_tuple[0])
+            if norm:
+                return norm
+    except Exception:
+        pass
+    return None
+
+
+def detect_game_language(game_dir: Path | str | None = None) -> tuple[str, str]:
+    """Detecta o idioma do TotK Recomp (env -> totk.ini -> totk-install.json -> Windows -> USen)."""
+    env_raw = os.environ.get("TOTK_LANG") or os.environ.get("TOTK_LOCALE")
+    if env_raw:
+        norm = normalize_locale_to_romfs(env_raw)
+        if norm:
+            return norm, "env"
+
+    base = Path(game_dir) if game_dir else DEFAULT_GAME_DIR
+    ini_lang = _read_totk_ini_language(base / "totk.ini")
+    if ini_lang:
+        return ini_lang, "totk.ini"
+
+    inst_path = base / "totk-install.json"
+    if inst_path.is_file():
+        try:
+            inst = json.loads(inst_path.read_text(encoding="utf-8"))
+            norm = normalize_locale_to_romfs(inst.get("lang"))
+            if norm:
+                return norm, "totk-install.json"
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    win_lang = _read_windows_locale()
+    if win_lang:
+        return win_lang, "windows"
+
+    return "USen", "default"
+
+
+def resolve_effective_language(
+    game_dir: Path | str | None = None,
+    settings: dict[str, Any] | None = None,
+) -> tuple[str, str, str]:
+    """Retorna (codigo_romfs_efetivo, configuracao_salva, origem)."""
+    cfg = settings if settings is not None else load_settings()
+    raw_setting = str(cfg.get("lang") or "auto").strip()
+    if not raw_setting or raw_setting.lower() == "auto":
+        code, source = detect_game_language(game_dir or DEFAULT_GAME_DIR)
+        return code, "auto", source
+    norm = normalize_locale_to_romfs(raw_setting)
+    if norm:
+        return norm, norm, "manual"
+    code, source = detect_game_language(game_dir or DEFAULT_GAME_DIR)
+    return code, "auto", source
 
 
 def ensure_dirs() -> None:

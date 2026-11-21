@@ -49,7 +49,12 @@ window.PurahMap = (function () {
     { key: "monsters", label: "Monstros", singular: "Monstro", icon: "entity_monster", color: "#ff5e6c" },
   ];
 
-  const LAYER_LABELS = { sky: "Céu", surface: "Superfície", depths: "Profundezas" };
+  const tr = (k, vars) => (window.PurahI18n ? window.PurahI18n.t(k, vars) : k);
+  const LAYER_LABELS = {
+    get sky() { return tr("layer.sky"); },
+    get surface() { return tr("layer.surface"); },
+    get depths() { return tr("layer.depths"); },
+  };
   const LAYER_INDEX = { surface: 0, sky: 1, depths: 2 };
 
   class MapController {
@@ -115,11 +120,15 @@ window.PurahMap = (function () {
     }
 
     getCategoryMeta() {
-      return CATEGORY_META;
+      return CATEGORY_META.map((c) => ({ ...c, label: tr("cat." + c.key) }));
     }
 
     getEntityMeta() {
-      return ENTITY_META;
+      return ENTITY_META.map((e) => ({
+        ...e,
+        label: tr("ent." + e.key),
+        singular: tr("ent." + e.key + ".singular"),
+      }));
     }
 
     _bindEvents() {
@@ -455,7 +464,7 @@ window.PurahMap = (function () {
         img.onerror = () => {
           entry.state = "err";
         };
-        img.src = `/api/icon/map/${encodeURIComponent(name)}.png?v=4`;
+        img.src = `/api/icon/map/${encodeURIComponent(name)}.png?v=5`;
         this.iconCache.set(name, entry);
       }
       return entry;
@@ -1154,8 +1163,8 @@ window.PurahMap = (function () {
             item: {
               kind: "entity",
               cat: meta.key,
-              catLabel: isQuestNpc ? "NPC c/ Missão Secundária" : meta.label,
-              singular: isQuestNpc ? "NPC (Missão Disponível)" : meta.singular,
+              catLabel: isQuestNpc ? tr("ent.questNpcCat") : tr("ent." + meta.key),
+              singular: isQuestNpc ? tr("ent.questNpcSingular") : tr("ent." + meta.key + ".singular"),
               index: i,
               display_name: name,
               count,

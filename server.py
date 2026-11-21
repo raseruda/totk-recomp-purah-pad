@@ -21,12 +21,17 @@ from config import (
     ENTITIES_PATH,
     MAP_DATA_PATH,
     QUESTS_PATH,
+    SUPPORTED_LANGUAGES,
     USER_MARKERS_PATH,
     WEB_DIR,
+    detect_game_language,
     ensure_dirs,
     find_latest_save_slot,
     get_game_dir,
     load_settings,
+    normalize_locale_to_romfs,
+    resolve_effective_language,
+    save_settings,
 )
 from live_memory import LiveMemoryReader
 from save_reader import SaveProgressReader, read_album_photos, read_footprint_sav
@@ -54,10 +59,20 @@ def _get_lan_ip() -> str | None:
 class PurahPadRuntime:
     """Gerencia cache estático, leitor ao vivo, leitor de save e marcadores do usuário."""
 
-    def __init__(self, game_dir: Path, lang: str = "USpt", lan: bool = False, port: int = 8765) -> None:
+    def __init__(
+        self,
+        game_dir: Path,
+        lang: str = "USen",
+        lang_setting: str = "auto",
+        lang_source: str = "default",
+        lan: bool = False,
+        port: int = 8765,
+    ) -> None:
         ensure_dirs()
         self.game_dir = game_dir
         self.lang = lang
+        self.lang_setting = lang_setting
+        self.lang_source = lang_source
         self.lan = lan
         self.port = port
         self.stop_event = threading.Event()
@@ -204,6 +219,7 @@ class PurahPadRuntime:
     def trigger_rebuild(self) -> None:
         if asset_builder.get_build_status().get("state") == "building":
             return
+        asset_builder._set_status(state="building", step="init", progress=0, total=100, message="Rebuilding cache...", error="")
         with self._static_lock:
             self.map_data = None
             self.quests_data = None
@@ -212,10 +228,36 @@ class PurahPadRuntime:
             self._static_gz.clear()
         threading.Thread(target=self._run_builder, args=(True,), daemon=True, name="AssetBuilder").start()
 
+    def update_settings(self, body: dict[str, Any]) -> dict[str, Any]:
+        updates: dict[str, Any] = {}
+        if "lang" in body:
+            raw_lang = str(body.get("lang") or "auto").strip()
+            norm = normalize_locale_to_romfs(raw_lang)
+            new_setting = "auto" if (not raw_lang or raw_lang.lower() == "auto" or norm is None) else norm
+            updates["lang"] = new_setting
+        cfg = save_settings(updates) if updates else load_settings()
+        eff_lang, saved_setting, src = resolve_effective_language(self.game_dir, cfg)
+        self.lang_setting = saved_setting
+        self.lang_source = src
+        rebuilding = False
+        if eff_lang != self.lang or not asset_builder.is_cache_ready(self.game_dir, eff_lang):
+            self.lang = eff_lang
+            self.trigger_rebuild()
+            rebuilding = True
+        return {
+            "lang": self.lang,
+            "lang_setting": self.lang_setting,
+            "lang_source": self.lang_source,
+            "rebuilding": rebuilding,
+        }
+
     def _run_builder(self, force: bool) -> None:
         try:
             asset_builder.build_all(self.game_dir, lang=self.lang, force=force)
             self._load_static_caches()
+            with self._static_lock:
+                self._save_mtime = -1.0
+                self._refresh_save_if_needed(self.map_data, self.quests_data, self.catalog_data)
         except Exception:
             pass
 
@@ -341,6 +383,14 @@ class PurahPadRuntime:
                     with self._state_lock:
                         self._latest_snapshot = offline
 
+            if tick > 0 and tick % 100 == 0 and self.lang_setting == "auto":
+                if asset_builder.get_build_status().get("state") != "building":
+                    eff_lang, src = detect_game_language(self.game_dir)
+                    self.lang_source = src
+                    if eff_lang != self.lang:
+                        self.lang = eff_lang
+                        self.trigger_rebuild()
+
             tick += 1
             self.stop_event.wait(0.1)
 
@@ -355,6 +405,9 @@ class PurahPadRuntime:
             "pid": live.get("pid"),
             "game_dir": str(self.game_dir),
             "lang": self.lang,
+            "lang_setting": self.lang_setting,
+            "lang_source": self.lang_source,
+            "supported_languages": SUPPORTED_LANGUAGES,
             "save_slot": self._save_slot_dir.name if self._save_slot_dir else None,
             "save_mtime": int(self._save_mtime) if self._save_mtime > 0 else None,
             "lan_url": f"http://{lan_ip}:{self.port}" if lan_ip else None,
@@ -582,6 +635,14 @@ class PurahPadHTTPHandler(BaseHTTPRequestHandler):
             self.runtime.trigger_rebuild()
             self._send_json(202, {"status": "rebuilding"})
             return
+        if path == "/api/settings":
+            body = self._read_json_body()
+            if body is None:
+                self._send_json(400, {"error": "Invalid JSON"})
+                return
+            res = self.runtime.update_settings(body)
+            self._send_json(200, res)
+            return
         self._send_json(404, {"error": "Rota não encontrada"})
 
     def do_PUT(self) -> None:
@@ -668,9 +729,16 @@ def create_server(
 ) -> tuple[PurahPadHTTPServer, PurahPadRuntime]:
     settings = load_settings()
     gdir = game_dir or get_game_dir()
-    lang = settings.get("lang", "USpt")
+    eff_lang, lang_setting, lang_source = resolve_effective_language(gdir, settings)
     host = "0.0.0.0" if lan else "127.0.0.1"
-    runtime = PurahPadRuntime(gdir, lang=lang, lan=lan, port=port)
+    runtime = PurahPadRuntime(
+        gdir,
+        lang=eff_lang,
+        lang_setting=lang_setting,
+        lang_source=lang_source,
+        lan=lan,
+        port=port,
+    )
     srv = PurahPadHTTPServer((host, port), runtime)
     runtime.port = srv.server_address[1]
     runtime.start_background_tasks(force_rebuild=rebuild)

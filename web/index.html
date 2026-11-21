@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Purah Pad — Tears of the Kingdom</title>
-  <link rel="stylesheet" href="/style.css?v=4" />
+  <link rel="stylesheet" href="/style.css?v=5" />
 </head>
 <body>
   <!-- Overlay de extração inicial do RomFS -->
@@ -18,13 +18,13 @@
           <path d="M32 6v7M20 10l3 6M44 10l-3 6M32 51v7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
       </div>
-      <h2>Inicializando Purah Pad</h2>
-      <p id="setup-message" class="muted">Preparando arquivos do jogo em Português...</p>
+      <h2 data-i18n="setup.title">Initializing Purah Pad</h2>
+      <p id="setup-message" class="muted" data-i18n="setup.defaultMsg">Preparing game files...</p>
       <div class="progress-track">
         <div id="setup-bar" class="progress-fill" style="width: 0%"></div>
       </div>
       <div id="setup-detail" class="setup-detail"></div>
-      <button id="setup-retry" class="btn btn-gold hidden">Tentar novamente</button>
+      <button id="setup-retry" class="btn btn-gold hidden" data-i18n="setup.retry">Try again</button>
     </div>
   </div>
 
@@ -38,29 +38,29 @@
       </svg>
       <div class="brand-text">
         <span class="brand-title">PURAH PAD</span>
-        <span id="conn-pill" class="conn-pill offline">● OFFLINE</span>
+        <span id="conn-pill" class="conn-pill offline" data-i18n="conn.offline">● OFFLINE</span>
       </div>
     </div>
 
     <nav class="main-tabs" role="tablist">
-      <button class="tab-btn active" data-tab="map" role="tab">Mapa</button>
-      <button class="tab-btn" data-tab="inventory" role="tab">Inventário</button>
-      <button class="tab-btn" data-tab="quests" role="tab">Missões</button>
-      <button class="tab-btn" data-tab="archives" role="tab">Arquivos</button>
-      <button class="tab-btn" data-tab="wiki" role="tab">Catálogo</button>
+      <button class="tab-btn active" data-tab="map" role="tab" data-i18n="nav.map">Map</button>
+      <button class="tab-btn" data-tab="inventory" role="tab" data-i18n="nav.inventory">Inventory</button>
+      <button class="tab-btn" data-tab="quests" role="tab" data-i18n="nav.quests">Quests</button>
+      <button class="tab-btn" data-tab="archives" role="tab" data-i18n="nav.archives">Archives</button>
+      <button class="tab-btn" data-tab="wiki" role="tab" data-i18n="nav.wiki">Catalog</button>
     </nav>
 
     <div id="hud-bar" class="hud-bar">
-      <div id="hud-hearts" class="hud-hearts" title="Corações"></div>
+      <div id="hud-hearts" class="hud-hearts" title="Hearts" data-i18n-title="hud.heartsTitle"></div>
       <div class="hud-stats">
-        <span id="hud-stamina" class="hud-chip" title="Vigor">⚡ —</span>
-        <span id="hud-battery" class="hud-chip" title="Bateria Zonai">🔋 —</span>
-        <span id="hud-rupees" class="hud-chip rupee" title="Rupees">◆ 0</span>
-        <span id="hud-poes" class="hud-chip poe" title="Poes" style="display:none">👻 0</span>
+        <span id="hud-stamina" class="hud-chip" title="Stamina" data-i18n-title="hud.staminaTitle">⚡ —</span>
+        <span id="hud-battery" class="hud-chip" title="Zonai Energy Cell" data-i18n-title="hud.batteryTitle">🔋 —</span>
+        <span id="hud-rupees" class="hud-chip rupee" title="Rupees" data-i18n-title="hud.rupeesTitle">◆ 0</span>
+        <span id="hud-poes" class="hud-chip poe" title="Poes" data-i18n-title="hud.poesTitle" style="display:none">👻 0</span>
         <span id="hud-buff" class="hud-chip buff" style="display:none"></span>
-        <span id="hud-coords" class="hud-chip coords" title="Posição do Link (X, Z, Y)">X: — Z: —</span>
+        <span id="hud-coords" class="hud-chip coords" title="Link's Position (X, Z, Y)" data-i18n-title="hud.coordsTitle">X: — Z: —</span>
       </div>
-      <button id="btn-settings" class="icon-btn" title="Informações e Cache">⚙</button>
+      <button id="btn-settings" class="icon-btn" title="Info, Language &amp; Cache" data-i18n-title="hud.settingsTitle">⚙</button>
     </div>
   </header>
 
@@ -71,17 +71,17 @@
       <aside id="map-sidebar" class="map-sidebar">
         <div class="sidebar-section spoiler-card">
           <div class="section-header" style="margin-bottom:6px">
-            <span class="section-label" style="margin:0;color:var(--gold)">Modo do Mapa</span>
+            <span class="section-label" style="margin:0;color:var(--gold)" data-i18n="map.modeLabel">Map Mode</span>
           </div>
-          <div class="mode-segmented" id="map-mode-seg" role="group" aria-label="Modo do Mapa">
-            <button type="button" class="mode-btn active" data-mode="spoiler_free">Sem Spoilers</button>
-            <button type="button" class="mode-btn" data-mode="assist">Auxílio</button>
-            <button type="button" class="mode-btn" data-mode="full">Completista</button>
+          <div class="mode-segmented" id="map-mode-seg" role="group" aria-label="Map Mode">
+            <button type="button" class="mode-btn active" data-mode="spoiler_free" data-i18n="map.mode.spoiler_free">Spoiler-Free</button>
+            <button type="button" class="mode-btn" data-mode="assist" data-i18n="map.mode.assist">Assist</button>
+            <button type="button" class="mode-btn" data-mode="full" data-i18n="map.mode.full">Completionist</button>
           </div>
-          <div id="map-mode-desc" class="switch-sub">Oculta santuários, koroks e segredos ainda não descobertos</div>
+          <div id="map-mode-desc" class="switch-sub" data-i18n="map.modeDesc.spoiler_free">Hides undiscovered shrines, Koroks, and secrets</div>
           <div id="assist-controls" class="assist-box hidden">
             <div class="assist-head">
-              <span>Raio do Radar</span>
+              <span data-i18n="map.radarRadius">Radar Radius</span>
               <span id="assist-radius-val" class="radius-badge">200 m</span>
             </div>
             <input type="range" id="rng-assist-radius" class="assist-slider" min="50" max="1000" step="25" value="200" />
@@ -92,44 +92,44 @@
         </div>
 
         <div class="sidebar-section">
-          <div class="section-label">Camada do Mapa</div>
+          <div class="section-label" data-i18n="map.layerLabel">Map Layer</div>
           <div class="layer-pills">
             <button class="layer-btn" data-layer="sky">
-              <img src="/api/icon/map/sky.png?v=4" alt="" onerror="this.style.display='none'" />
-              Céu
+              <img src="/api/icon/map/sky.png?v=5" alt="" onerror="this.style.display='none'" />
+              <span data-i18n="layer.sky">Sky</span>
             </button>
             <button class="layer-btn active" data-layer="surface">
-              <img src="/api/icon/map/surface.png?v=4" alt="" onerror="this.style.display='none'" />
-              Superfície
+              <img src="/api/icon/map/surface.png?v=5" alt="" onerror="this.style.display='none'" />
+              <span data-i18n="layer.surface">Surface</span>
             </button>
             <button class="layer-btn" data-layer="depths">
-              <img src="/api/icon/map/depths.png?v=4" alt="" onerror="this.style.display='none'" />
-              Profundezas
+              <img src="/api/icon/map/depths.png?v=5" alt="" onerror="this.style.display='none'" />
+              <span data-i18n="layer.depths">Depths</span>
             </button>
           </div>
           <div class="toggle-grid">
-            <label class="mini-check"><input type="checkbox" id="chk-fog" checked /> Só mapa revelado</label>
-            <label class="mini-check" title="Oculta baús, koroks, santuários concluídos, sapos, chefes e demais coletáveis já obtidos"><input type="checkbox" id="chk-hide-done" /> Ocultar coletados</label>
-            <label class="mini-check"><input type="checkbox" id="chk-autolayer" checked /> Auto-camada</label>
-            <label class="mini-check"><input type="checkbox" id="chk-follow" checked /> Seguir Link</label>
-            <label class="mini-check"><input type="checkbox" id="chk-heropath" checked /> Caminho do Herói</label>
-            <label class="mini-check"><input type="checkbox" id="chk-pins" checked /> Pinos e Carimbos</label>
-            <label class="mini-check"><input type="checkbox" id="chk-quests-map" checked /> Missões ativas</label>
-            <label class="mini-check"><input type="checkbox" id="chk-custom-map" checked /> Meus marcadores</label>
+            <label class="mini-check"><input type="checkbox" id="chk-fog" checked /> <span data-i18n="toggle.fog">Revealed map only</span></label>
+            <label class="mini-check" data-i18n-title="toggle.hideDoneTitle" title="Hides collected items"><input type="checkbox" id="chk-hide-done" /> <span data-i18n="toggle.hideDone">Hide completed</span></label>
+            <label class="mini-check"><input type="checkbox" id="chk-autolayer" checked /> <span data-i18n="toggle.autoLayer">Auto-layer</span></label>
+            <label class="mini-check"><input type="checkbox" id="chk-follow" checked /> <span data-i18n="toggle.follow">Follow Link</span></label>
+            <label class="mini-check"><input type="checkbox" id="chk-heropath" checked /> <span data-i18n="toggle.heroPath">Hero's Path</span></label>
+            <label class="mini-check"><input type="checkbox" id="chk-pins" checked /> <span data-i18n="toggle.pins">Pins &amp; Stamps</span></label>
+            <label class="mini-check"><input type="checkbox" id="chk-quests-map" checked /> <span data-i18n="toggle.quests">Active quests</span></label>
+            <label class="mini-check"><input type="checkbox" id="chk-custom-map" checked /> <span data-i18n="toggle.custom">My markers</span></label>
           </div>
         </div>
 
         <div class="sidebar-section">
-          <input type="search" id="map-search" class="search-input" placeholder="Buscar loja, santuário, NPC, planta, monstro..." />
+          <input type="search" id="map-search" class="search-input" data-i18n-placeholder="search.mapPlaceholder" placeholder="Search shop, shrine, NPC, plant, monster..." />
           <div id="map-search-results" class="search-results hidden"></div>
         </div>
 
         <div class="sidebar-section categories-section">
           <div class="section-header">
-            <span class="section-label">Filtros do Mapa</span>
+            <span class="section-label" data-i18n="map.filtersLabel">Map Filters</span>
             <div class="quick-actions">
-              <button id="btn-cat-all" class="link-btn">Todos</button>
-              <button id="btn-cat-none" class="link-btn">Limpar</button>
+              <button id="btn-cat-all" class="link-btn" data-i18n="btn.all">All</button>
+              <button id="btn-cat-none" class="link-btn" data-i18n="btn.clear">Clear</button>
             </div>
           </div>
           <div id="map-categories" class="cat-list"></div>
@@ -140,19 +140,19 @@
         <canvas id="map-canvas"></canvas>
 
         <div class="map-toolbar">
-          <button id="btn-toggle-sidebar" class="tool-btn" title="Mostrar/Ocultar barra lateral">☰</button>
-          <button id="btn-recenter" class="tool-btn tool-primary" title="Centralizar no Link (Espaço)">⌖ Link</button>
-          <button id="btn-zoom-in" class="tool-btn" title="Aproximar">+</button>
-          <button id="btn-zoom-out" class="tool-btn" title="Afastar">−</button>
-          <button id="btn-new-marker" class="tool-btn tool-gold" title="Clique direito no mapa para marcar">+ Marcador</button>
-          <button id="btn-nearby" class="tool-btn" title="Mostrar pontos de interesse próximos no radar">📡 Por Perto</button>
+          <button id="btn-toggle-sidebar" class="tool-btn" data-i18n-title="toolbar.sidebarTitle" title="Show/Hide sidebar">☰</button>
+          <button id="btn-recenter" class="tool-btn tool-primary" data-i18n="toolbar.recenter" data-i18n-title="toolbar.recenterTitle" title="Center on Link (Space)">⌖ Link</button>
+          <button id="btn-zoom-in" class="tool-btn" data-i18n-title="toolbar.zoomInTitle" title="Zoom in">+</button>
+          <button id="btn-zoom-out" class="tool-btn" data-i18n-title="toolbar.zoomOutTitle" title="Zoom out">−</button>
+          <button id="btn-new-marker" class="tool-btn tool-gold" data-i18n="toolbar.newMarker" data-i18n-title="toolbar.newMarkerTitle" title="Right-click to mark">+ Marker</button>
+          <button id="btn-nearby" class="tool-btn" data-i18n="toolbar.nearby" data-i18n-title="toolbar.nearbyTitle" title="Show nearby points of interest on radar">📡 Nearby</button>
         </div>
 
         <div id="wiki-filter-banner" class="wiki-filter-banner hidden"></div>
 
         <div class="map-statusbar">
           <span id="map-cursor-coords">X: 0 · Z: 0</span>
-          <span id="map-zoom-label">Superfície</span>
+          <span id="map-zoom-label" data-i18n="layer.surface">Surface</span>
         </div>
 
         <!-- Drawer lateral direito de pontos próximos (Radar) -->
@@ -169,13 +169,13 @@
         <div id="sages-strip" class="sages-strip"></div>
         <div class="inv-controls">
           <div id="inv-cats" class="pill-bar"></div>
-          <input type="search" id="inv-search" class="search-input compact" placeholder="Filtrar item na bolsa..." />
+          <input type="search" id="inv-search" class="search-input compact" data-i18n-placeholder="inv.searchPlaceholder" placeholder="Filter inventory items..." />
         </div>
       </div>
       <div class="inv-body">
         <div id="inv-grid" class="inv-grid"></div>
         <aside id="inv-detail" class="detail-panel empty">
-          <div class="empty-hint">Selecione um item da bolsa para ver atributos, acoplamentos e descrição.</div>
+          <div class="empty-hint" data-i18n="inv.emptyHint">Select an item from your pouch to inspect stats, fuse material, and description.</div>
         </aside>
       </div>
     </section>
@@ -185,12 +185,12 @@
       <div class="quests-header">
         <div id="quest-cat-pills" class="pill-bar"></div>
         <div id="quest-status-pills" class="pill-bar subtle"></div>
-        <input type="search" id="quest-search" class="search-input compact" placeholder="Buscar missão, NPC ou região..." />
+        <input type="search" id="quest-search" class="search-input compact" data-i18n-placeholder="quest.searchPlaceholder" placeholder="Search quest, NPC, or region..." />
       </div>
       <div class="quests-body">
         <div id="quest-list" class="quest-list"></div>
         <aside id="quest-detail" class="detail-panel empty">
-          <div class="empty-hint">Escolha uma missão no Diário de Aventura para ver os passos e o destino no mapa.</div>
+          <div class="empty-hint" data-i18n="quest.emptyHint">Select a quest in Adventure Log to inspect steps and destination.</div>
         </aside>
       </div>
     </section>
@@ -199,22 +199,22 @@
     <section id="view-archives" class="tab-view">
       <div class="archives-header">
         <div id="archive-subtabs" class="pill-bar">
-          <button class="pill active" data-sub="compendium">Enciclopédia</button>
-          <button class="pill" data-sub="profiles">Perfis</button>
-          <button class="pill" data-sub="recipes">Receitas</button>
-          <button class="pill" data-sub="memories">Memórias</button>
-          <button class="pill" data-sub="album">Álbum</button>
+          <button class="pill active" data-sub="compendium" data-i18n="arch.sub.compendium">Compendium</button>
+          <button class="pill" data-sub="profiles" data-i18n="arch.sub.profiles">Profiles</button>
+          <button class="pill" data-sub="recipes" data-i18n="arch.sub.recipes">Recipes</button>
+          <button class="pill" data-sub="memories" data-i18n="arch.sub.memories">Memories</button>
+          <button class="pill" data-sub="album" data-i18n="arch.sub.album">Album</button>
         </div>
         <div class="archive-filters">
           <div id="archive-extra-filters" class="pill-bar subtle"></div>
-          <label class="mini-check"><input type="checkbox" id="chk-archive-spoiler" checked /> Ocultar não descobertos</label>
-          <input type="search" id="archive-search" class="search-input compact" placeholder="Buscar nos arquivos..." />
+          <label class="mini-check"><input type="checkbox" id="chk-archive-spoiler" checked /> <span data-i18n="arch.hideUndiscovered">Hide undiscovered</span></label>
+          <input type="search" id="archive-search" class="search-input compact" data-i18n-placeholder="arch.searchPlaceholder" placeholder="Search archives..." />
         </div>
       </div>
       <div class="archives-body">
         <div id="archive-grid" class="archive-grid"></div>
         <aside id="archive-detail" class="detail-panel empty">
-          <div class="empty-hint">Selecione um registro para visualizar detalhes completos.</div>
+          <div class="empty-hint" data-i18n="arch.emptyHint">Select an entry to view full details.</div>
         </aside>
       </div>
     </section>
@@ -224,15 +224,15 @@
       <div class="wiki-header">
         <div id="wiki-cats" class="pill-bar"></div>
         <div class="wiki-filters">
-          <label class="mini-check"><input type="checkbox" id="chk-wiki-shops-only" /> Apenas à venda</label>
-          <label class="mini-check"><input type="checkbox" id="chk-wiki-all-ranks" /> Mostrar variantes / internas</label>
-          <input type="search" id="wiki-search" class="search-input compact" placeholder="Buscar item, material, arma, receita..." />
+          <label class="mini-check"><input type="checkbox" id="chk-wiki-shops-only" /> <span data-i18n="wiki.shopsOnly">Sold in shops only</span></label>
+          <label class="mini-check"><input type="checkbox" id="chk-wiki-all-ranks" /> <span data-i18n="wiki.allRanks">Show variants / internal</span></label>
+          <input type="search" id="wiki-search" class="search-input compact" data-i18n-placeholder="wiki.searchPlaceholder" placeholder="Search item, material, weapon, recipe..." />
         </div>
       </div>
       <div class="wiki-body">
         <div id="wiki-grid" class="wiki-grid"></div>
         <aside id="wiki-detail" class="detail-panel empty">
-          <div class="empty-hint">Selecione um item do Catálogo para ver atributos e onde encontrá-lo em Hyrule.</div>
+          <div class="empty-hint" data-i18n="wiki.emptyHint">Select a Catalog item to view stats and where to find it in Hyrule.</div>
         </aside>
       </div>
     </section>
@@ -242,13 +242,18 @@
   <div id="settings-modal" class="overlay hidden">
     <div class="modal-card">
       <div class="modal-head">
-        <h3>Purah Pad — Status &amp; Sistema</h3>
+        <h3 data-i18n="settings.title">Purah Pad — Status &amp; System</h3>
         <button id="btn-close-settings" class="icon-btn">✕</button>
+      </div>
+      <div class="form-group" style="margin-bottom:14px">
+        <label for="sel-lang" data-i18n="settings.langLabel">Language (Syncs with Game)</label>
+        <select id="sel-lang" class="form-control"></select>
+        <div id="settings-lang-hint" class="muted" style="font-size:11px;margin-top:5px"></div>
       </div>
       <div id="settings-info" class="settings-info"></div>
       <div class="modal-actions">
-        <button id="btn-rebuild-cache" class="btn btn-gold">Reconstruir Cache do RomFS</button>
-        <button id="btn-close-settings-2" class="btn">Fechar</button>
+        <button id="btn-rebuild-cache" class="btn btn-gold" data-i18n="settings.rebuildBtn">Rebuild RomFS Cache</button>
+        <button id="btn-close-settings-2" class="btn" data-i18n="settings.closeBtn">Close</button>
       </div>
     </div>
   </div>
@@ -257,12 +262,13 @@
   <div id="photo-lightbox" class="overlay hidden">
     <div class="lightbox-card">
       <button id="btn-close-lightbox" class="lightbox-close">✕</button>
-      <img id="lightbox-img" src="" alt="Foto do Álbum" />
+      <img id="lightbox-img" src="" alt="Album Photo" />
       <div id="lightbox-caption" class="lightbox-caption"></div>
     </div>
   </div>
 
-  <script src="/map.js?v=4"></script>
-  <script src="/app.js?v=4"></script>
+  <script src="/i18n.js?v=5"></script>
+  <script src="/map.js?v=5"></script>
+  <script src="/app.js?v=5"></script>
 </body>
 </html>

@@ -77,6 +77,34 @@ HIDE_TYPES_PT: dict[int | None, str] = {
     24: "Pedestal de pedra",
     25: "Tocar o sino",
 }
+HIDE_TYPES_EN: dict[int | None, str] = {
+    None: "Lift rock",
+    1: "Sparkling leaves",
+    2: "Dive into ring",
+    3: "Flower trail",
+    4: "Race to target",
+    5: "Moving sparkle",
+    6: "Rock pattern",
+    7: "Offering plate",
+    8: "Pinwheel & balloons",
+    9: "Shoot balloon",
+    10: "Hanging acorn",
+    11: "Land on target",
+    12: "Build shelter",
+    13: "Fix roof",
+    15: "Block puzzle",
+    17: "Reach the light",
+    18: "Touch target",
+    19: "Grab seed",
+    20: "Pull cork",
+    23: "Ascend ceiling",
+    24: "Stone pedestal",
+    25: "Ring bell",
+}
+
+
+def _ltxt(lang: str, en: str, pt: str) -> str:
+    return pt if lang == "USpt" else en
 SCHEMA_SITES = {
     "Obj_AutoBuilderDraft_00": "SmeltShopGolem_10",
     "Obj_AutoBuilderDraft_01": "MinusField_Rito",
@@ -974,10 +1002,12 @@ def _resolve_item_name_caption(
     pouch_msg: dict[str, str],
     pb_msg: dict[str, str],
     attach_msg: dict[str, str],
+    lang: str = "USen",
 ) -> tuple[str, str]:
-    """Resolve nome e descrição oficiais PT-BR de um PouchActorInfo.__RowId."""
+    """Resolve nome e descrição oficiais (no idioma do jogo) de um PouchActorInfo.__RowId."""
     if rid == "Energy_Material_02" and "Energy_Material_02_Name" not in pouch_msg:
-        return "Cristal energético", pouch_msg.get("Energy_Material_02_Caption") or ""
+        nm = pouch_msg.get("Energy_Material_01_Name") or _ltxt(lang, "Crystallized Charge", "Cristal energético")
+        return nm, pouch_msg.get("Energy_Material_02_Caption") or ""
     cands = [rid]
     for src_pref, alt_pref in (
         ("Animal_Fish_", "Item_FishGet_"),
@@ -1077,6 +1107,7 @@ def _build_map_data(
     gd: dict[str, Any],
     pouch_rows: list[dict[str, Any]],
     quests_data: dict[str, Any] | None = None,
+    lang: str = "USen",
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, list[dict[str, Any]]]]:
     _set_status(step="map", progress=0, total=100, message="Extraindo locais, lojas, santuários, koroks e baús...")
 
@@ -1123,7 +1154,8 @@ def _build_map_data(
 
     def resolve_shop_flag(loc_name: str, row: dict[str, Any]) -> tuple[int, str]:
         dep = dep_hash_to_base.get(row.get("DependenceLocationHash") or 0, "")
-        sub_label = names.get(dep, "") if dep else ("Grande Ilha Celeste" if loc_name.endswith("_00") else "")
+        beg_island = names.get("BeginningIsland") or names.get("HyruleSkyIsland") or _ltxt(lang, "Great Sky Island", "Grande Ilha Celeste")
+        sub_label = names.get(dep, "") if dep else (beg_island if loc_name.endswith("_00") else "")
         ov_hash = row.get("OverrideIconFlagHash")
         if ov_hash and ov_hash in bool_flags:
             return int(ov_hash), sub_label
@@ -1296,7 +1328,11 @@ def _build_map_data(
                         }
                     )
                 elif cat == "DragonTears":
-                    fallback = f"Lágrima do Dragão {int(name[-2:])}" if name[-2:].isdigit() else display
+                    fallback = (
+                        _ltxt(lang, f"Dragon's Tear {int(name[-2:])}", f"Lágrima do Dragão {int(name[-2:])}")
+                        if name[-2:].isdigit()
+                        else display
+                    )
                     tear_areas[name] = (names.get(name) or fallback, trans[0])
                 else:
                     row = loc_rsdb_map.get(name, {})
@@ -1340,7 +1376,7 @@ def _build_map_data(
             cids = [c for c in (e.get("Contents") or [])]
             data["dispensers"].append(
                 {
-                    "display_name": "Dispensador Zonai",
+                    "display_name": _ltxt(lang, "Zonai Dispenser", "Dispensador Zonai"),
                     "completion_hash": mmh3(f"RecycleBoxData.{iid}.IsVisit"),
                     "position": _pos(e["Trans"]),
                     "contents": [items_msg.get(f"{c}_Name", c) for c in cids],
@@ -1478,7 +1514,7 @@ def _build_map_data(
                 if g.startswith("Enemy_Lynel"):
                     seen.add(h)
                     handled_special = True
-                    bname = bosses_msg.get(f"{g.replace('_Boss', '')}_Name") or "Centaleão"
+                    bname = bosses_msg.get(f"{g.replace('_Boss', '')}_Name") or _ltxt(lang, "Lynel", "Centaleão")
                     data["lynels"].append({"display_name": bname, "position": _pos(t), "layer": layer})
                 elif g.startswith("Enemy_"):
                     kind = g.split("_")[1]
@@ -1495,42 +1531,50 @@ def _build_map_data(
                     seen.add(h)
                     handled_special = True
                     data["addison_signposts"].append(
-                        {"guid": str(h), "display_name": "Placa do Hudson (Addison)", "position": _pos(t), "layer": layer}
+                        {
+                            "guid": str(h),
+                            "display_name": _ltxt(lang, "Hudson Sign (Addison)", "Placa do Hudson (Addison)"),
+                            "position": _pos(t),
+                            "layer": layer,
+                        }
                     )
                 elif g.startswith("TBox_"):
                     handled_special = True
                     drop = dyn.get("Drop__DropActor") or ""
+                    sage_lbl = items_msg.get("Obj_SageWill_Name") or _ltxt(lang, "Sage's Will", "Vontade de Sábio")
                     if drop == "Obj_SageWill":
                         seen.add(h)
-                        add_chest_drop(drop, "Vontade de Sábio", t, layer)
+                        add_chest_drop(drop, sage_lbl, t, layer)
                         data["sages_wills"].append(
                             {
                                 "guid": str(h),
-                                "display_name": items_msg.get("Obj_SageWill_Name") or "Vontade de Sábio",
+                                "display_name": sage_lbl,
                                 "position": _pos(t),
                                 "layer": layer,
                             }
                         )
                     elif drop in treasure_maps:
                         seen.add(h)
-                        add_chest_drop(drop, "Mapa Antigo", t, layer)
+                        omap_lbl = items_msg.get("Obj_TreasureMap_Name") or _ltxt(lang, "Old Map", "Mapa antigo")
+                        add_chest_drop(drop, omap_lbl, t, layer)
                         armor_id = treasure_maps[drop]
                         armor_name = resolve_drop_name(armor_id)
                         data["old_maps"].append(
                             {
                                 "completion_hash": mmh3(f"IsFindTreasureMap.{armor_id}"),
-                                "display_name": f"Mapa antigo ({armor_name})" if armor_name else f"Mapa antigo ({drop[-2:]})",
+                                "display_name": f"{omap_lbl} ({armor_name})" if armor_name else f"{omap_lbl} ({drop[-2:]})",
                                 "position": _pos(t),
                                 "layer": layer,
                             }
                         )
                     elif drop.startswith("Obj_AutoBuilderDraftAssassin_"):
                         seen.add(h)
-                        add_chest_drop(drop, "Esquema Yiga", t, layer)
+                        yiga_lbl = _ltxt(lang, "Yiga Schematic", "Esquema Yiga")
+                        add_chest_drop(drop, yiga_lbl, t, layer)
                         data["yiga_schematics"].append(
                             {
                                 "completion_hash": mmh3(f"ReadyMadeAutoBuilderDraft.{drop}.IsOwned"),
-                                "display_name": drafts.get(f"{drop}_Name") or "Esquema Yiga",
+                                "display_name": drafts.get(f"{drop}_Name") or yiga_lbl,
                                 "position": _pos(t),
                                 "layer": layer,
                             }
@@ -1538,8 +1582,9 @@ def _build_map_data(
                     else:
                         seen.add(h)
                         key = "armor_chests" if drop.startswith("Armor_") else "treasure_chests"
-                        fallback = "Armadura" if key == "armor_chests" else "Baú do Tesouro"
-                        add_chest_drop(drop, "Baú de Armadura" if key == "armor_chests" else "Baú do Tesouro", t, layer)
+                        fallback = _ltxt(lang, "Armor", "Armadura") if key == "armor_chests" else _ltxt(lang, "Treasure Chest", "Baú do Tesouro")
+                        kind_lbl = _ltxt(lang, "Armor Chest", "Baú de Armadura") if key == "armor_chests" else _ltxt(lang, "Treasure Chest", "Baú do Tesouro")
+                        add_chest_drop(drop, kind_lbl, t, layer)
                         data[key].append(
                             {
                                 "guid": str(h),
@@ -1590,9 +1635,10 @@ def _build_map_data(
             _, hide = korok_kind.get(h, ("", None))
             layer = "sky" if float(t[1]) > 680.0 else "surface"
             if not is_carry:
-                puzzle = HIDE_TYPES_PT.get(hide, "Outro")
+                hide_map = HIDE_TYPES_PT if lang == "USpt" else HIDE_TYPES_EN
+                puzzle = hide_map.get(hide, _ltxt(lang, "Other", "Outro"))
                 if hide == 10 and _nearest(vine_pots, t, 30):
-                    puzzle = "Bolota no buraco"
+                    puzzle = _ltxt(lang, "Acorn in hole", "Bolota no buraco")
                 o: dict[str, Any] = {
                     "completion_hash": mmh3(f"IsAppearKorok.{iid}"),
                     "display_name": f"Korok ({puzzle})",
@@ -1617,9 +1663,9 @@ def _build_map_data(
             else:
                 o = {
                     "completion_hash": mmh3(f"KorokCarryProgress.{iid}"),
-                    "display_name": "Dupla de Koroks",
+                    "display_name": _ltxt(lang, "Korok Pair", "Dupla de Koroks"),
                     "position": _pos(t),
-                    "puzzle_type": "Levar ao amigo",
+                    "puzzle_type": _ltxt(lang, "Carry to friend", "Levar ao amigo"),
                     "layer": layer,
                 }
                 pair = min(pairs, key=lambda p: _dist(p[1], t)) if pairs else None
@@ -1676,7 +1722,7 @@ def _build_map_data(
         if flag in bool_flags:
             data["great_fairies"].append(
                 {
-                    "display_name": npcs.get(f"{g}_Name") or "Grande Fada",
+                    "display_name": npcs.get(f"{g}_Name") or _ltxt(lang, "Great Fairy", "Grande Fada"),
                     "completion_hash": flag,
                     "position": _pos(t),
                     "layer": "surface",
@@ -1698,11 +1744,15 @@ def _build_map_data(
     _set_status(progress=92, message="Processando estoque de lojas, missões de NPCs e entidades...")
 
     # 1) Inventário das lojas físicas via links ForSale (filtrando categoria de loja para não cruzar vizinhas)
+    cur_zonaite = items_msg.get("Item_Ore_L_Name") or "Zonaite"
+    cur_large_zonaite = items_msg.get("Item_Ore_M_Name") or _ltxt(lang, "Large Zonaite", "Zonaíta grande")
+    cur_poe = items_msg.get("MinusRupee_00_Name") or "Poes"
+    cur_crystal = items_msg.get("Energy_Material_01_Name") or _ltxt(lang, "Crystallized Charge", "Cristal energético")
     smelt_prices: dict[str, tuple[int, str]] = {
-        "Energy_Material_02": (3, "Zonaite"),
-        "Energy_Material_03": (3, "Zonaite grande"),
-        "Item_Enemy_130": (3, "Zonaite"),
-        "Item_Enemy_131": (3, "Zonaite grande"),
+        "Energy_Material_02": (3, cur_zonaite),
+        "Energy_Material_03": (3, cur_large_zonaite),
+        "Item_Enemy_130": (3, cur_zonaite),
+        "Item_Enemy_131": (3, cur_large_zonaite),
     }
     shops_list: list[dict[str, Any]] = data["shops"]
     shop_seen_goods: list[set[tuple[str, int]]] = [set() for _ in shops_list]
@@ -1721,7 +1771,7 @@ def _build_map_data(
 
         row_raw = pouch_by_id.get(raw_clean) or pouch_by_id.get(canon_id) or {}
         row_can = pouch_by_id.get(canon_id) or row_raw
-        nm, _ = _resolve_item_name_caption(canon_id, items_msg, pb_msg, attach_msg)
+        nm, _ = _resolve_item_name_caption(canon_id, items_msg, pb_msg, attach_msg, lang=lang)
         if price_override is not None:
             price = int(price_override)
         else:
@@ -1787,11 +1837,11 @@ def _build_map_data(
             row_can = pouch_by_id.get(canon_id) or {}
             pay_list = entry.get("PaymentList") or []
             if pay_list:
-                currency = "Cargas cristalizadas"
+                currency = cur_crystal
                 price = int(pay_list[0].get("Num") or 3)
             else:
                 cur_raw = entry.get("Currency")
-                currency = "Poes" if cur_raw == "MinusRupee" else default_currency
+                currency = cur_poe if cur_raw == "MinusRupee" else default_currency
                 base_buy = int(row_can.get("BuyingPrice") or 0)
                 offset = int(entry.get("PriceOffset") or 0)
                 price = max(1, base_buy + offset) if (base_buy or offset) else 0
@@ -1800,9 +1850,9 @@ def _build_map_data(
     for sidx, sh in enumerate(shops_list):
         iname = sh.get("internal_name") or ""
         if iname.startswith("DemonStatue_") or iname == "SmallDemonStatue":
-            apply_goods_list(sidx, demon_goods, default_currency="Poes")
+            apply_goods_list(sidx, demon_goods, default_currency=cur_poe)
         elif iname.startswith("BatteryExchangeShop_"):
-            apply_goods_list(sidx, battery_goods, default_currency="Cargas cristalizadas")
+            apply_goods_list(sidx, battery_goods, default_currency=cur_crystal)
         elif iname == "ShopArmor_Hateno":
             apply_goods_list(sidx, hateno_armor_goods, default_currency="Rupees")
         if sh.get("goods"):
@@ -2017,6 +2067,7 @@ def _build_catalog(
     map_data: dict[str, Any] | None = None,
     entities: dict[str, Any] | None = None,
     chest_drops: dict[str, list[dict[str, Any]]] | None = None,
+    lang: str = "USen",
 ) -> dict[str, Any]:
     _set_status(step="catalog", progress=0, total=100, message="Construindo catálogo wiki de itens, drops e arquivos...")
 
@@ -2039,7 +2090,7 @@ def _build_catalog(
     items: dict[str, dict[str, Any]] = {}
     for row in pouch_rows:
         rid = row["__RowId"]
-        nm, cap = _resolve_item_name_caption(rid, pouch_msg, pb_msg, attach_msg)
+        nm, cap = _resolve_item_name_caption(rid, pouch_msg, pb_msg, attach_msg, lang=lang)
         items[rid] = {
             "id": rid,
             "name": nm,
@@ -2138,11 +2189,11 @@ def _build_catalog(
     # Enciclopédia de Hyrule (PictureBook)
     res_sarc = parse_sarc(romfs.read("Pack/ResidentCommon.pack.zs"))
     pb_categories = [
-        ("Animal", "Animais"),
-        ("Enemy", "Monstros"),
-        ("Material", "Materiais"),
-        ("Weapon", "Equipamentos"),
-        ("Treasure", "Tesouros"),
+        ("Animal", _ltxt(lang, "Creatures", "Animais")),
+        ("Enemy", _ltxt(lang, "Monsters", "Monstros")),
+        ("Material", _ltxt(lang, "Materials", "Materiais")),
+        ("Weapon", _ltxt(lang, "Equipment", "Equipamentos")),
+        ("Treasure", _ltxt(lang, "Treasure", "Tesouros")),
     ]
     pb_icons = {p.rsplit("/", 1)[-1].removesuffix("_Icon.bntx.zs") for p in romfs.find("UI/Tex/PictureBook/", "_Icon.bntx.zs")}
     compendium: list[dict[str, Any]] = []
@@ -2338,9 +2389,13 @@ def sample_heightmap(game_dir: Path, layer: str, x: float, z: float) -> float:
     return fallback
 
 
-def build_all(game_dir: Path, lang: str = "USpt", force: bool = False) -> None:
+def build_all(game_dir: Path, lang: str = "auto", force: bool = False) -> None:
     """Constrói todo o cache (tiles LOD 2, ícones, máscaras, map_data, entities, quests, catalog)."""
     ensure_dirs()
+    from config import resolve_effective_language
+
+    if not lang or str(lang).lower() == "auto":
+        lang, _, _ = resolve_effective_language(game_dir, {"lang": "auto"})
     if not force and is_cache_ready(game_dir, lang):
         _set_status(state="ready", step="done", progress=1, total=1, message="Pronto", error="")
         return
@@ -2364,8 +2419,8 @@ def build_all(game_dir: Path, lang: str = "USpt", force: bool = False) -> None:
         pouch_rows = parse_byml(romfs.read("RSDB/PouchActorInfo.Product.143.rstbl.byml.zs")) or []
 
         quests_data = _build_quests_data(romfs, mals, gd)
-        map_data, entities, chest_drops = _build_map_data(romfs, mals, gd, pouch_rows, quests_data=quests_data)
-        catalog = _build_catalog(romfs, mals, pouch_rows, map_data=map_data, entities=entities, chest_drops=chest_drops)
+        map_data, entities, chest_drops = _build_map_data(romfs, mals, gd, pouch_rows, quests_data=quests_data, lang=lang)
+        catalog = _build_catalog(romfs, mals, pouch_rows, map_data=map_data, entities=entities, chest_drops=chest_drops, lang=lang)
 
         meta = {
             "cache_version": CACHE_VERSION,
@@ -2403,7 +2458,7 @@ if __name__ == "__main__":
 
     ap = argparse.ArgumentParser(description="Constrói o cache de dados do Purah Pad a partir do RomFS do TotK.")
     ap.add_argument("--game-dir", default=None)
-    ap.add_argument("--lang", default="USpt")
+    ap.add_argument("--lang", default="auto")
     ap.add_argument("--force", action="store_true")
     args = ap.parse_args()
     gdir = get_game_dir(args.game_dir)
