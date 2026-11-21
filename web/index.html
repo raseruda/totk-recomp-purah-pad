@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Purah Pad — Tears of the Kingdom</title>
+  <link rel="stylesheet" href="/style.css?v=4" />
+</head>
+<body>
+  <!-- Overlay de extração inicial do RomFS -->
+  <div id="setup-overlay" class="overlay hidden">
+    <div class="setup-card">
+      <div class="purah-crest">
+        <svg viewBox="0 0 64 64" width="56" height="56" aria-hidden="true">
+          <circle cx="32" cy="32" r="28" fill="none" stroke="currentColor" stroke-width="2" opacity="0.4"/>
+          <path d="M12 32c6-10 14-15 20-15s14 5 20 15c-6 10-14 15-20 15s-14-5-20-15z" fill="none" stroke="currentColor" stroke-width="2.5"/>
+          <circle cx="32" cy="32" r="7" fill="currentColor"/>
+          <path d="M32 6v7M20 10l3 6M44 10l-3 6M32 51v7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <h2>Inicializando Purah Pad</h2>
+      <p id="setup-message" class="muted">Preparando arquivos do jogo em Português...</p>
+      <div class="progress-track">
+        <div id="setup-bar" class="progress-fill" style="width: 0%"></div>
+      </div>
+      <div id="setup-detail" class="setup-detail"></div>
+      <button id="setup-retry" class="btn btn-gold hidden">Tentar novamente</button>
+    </div>
+  </div>
+
+  <!-- Barra superior persistente -->
+  <header id="top-bar">
+    <div class="brand">
+      <svg class="brand-icon" viewBox="0 0 40 40" width="28" height="28" aria-hidden="true">
+        <circle cx="20" cy="20" r="18" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.5"/>
+        <path d="M6 20c4-7 9.5-10 14-10s10 3 14 10c-4 7-9.5 10-14 10S10 27 6 20z" fill="none" stroke="currentColor" stroke-width="2"/>
+        <circle cx="20" cy="20" r="4.5" fill="currentColor"/>
+      </svg>
+      <div class="brand-text">
+        <span class="brand-title">PURAH PAD</span>
+        <span id="conn-pill" class="conn-pill offline">● OFFLINE</span>
+      </div>
+    </div>
+
+    <nav class="main-tabs" role="tablist">
+      <button class="tab-btn active" data-tab="map" role="tab">Mapa</button>
+      <button class="tab-btn" data-tab="inventory" role="tab">Inventário</button>
+      <button class="tab-btn" data-tab="quests" role="tab">Missões</button>
+      <button class="tab-btn" data-tab="archives" role="tab">Arquivos</button>
+      <button class="tab-btn" data-tab="wiki" role="tab">Catálogo</button>
+    </nav>
+
+    <div id="hud-bar" class="hud-bar">
+      <div id="hud-hearts" class="hud-hearts" title="Corações"></div>
+      <div class="hud-stats">
+        <span id="hud-stamina" class="hud-chip" title="Vigor">⚡ —</span>
+        <span id="hud-battery" class="hud-chip" title="Bateria Zonai">🔋 —</span>
+        <span id="hud-rupees" class="hud-chip rupee" title="Rupees">◆ 0</span>
+        <span id="hud-poes" class="hud-chip poe" title="Poes" style="display:none">👻 0</span>
+        <span id="hud-buff" class="hud-chip buff" style="display:none"></span>
+        <span id="hud-coords" class="hud-chip coords" title="Posição do Link (X, Z, Y)">X: — Z: —</span>
+      </div>
+      <button id="btn-settings" class="icon-btn" title="Informações e Cache">⚙</button>
+    </div>
+  </header>
+
+  <!-- Conteúdo principal -->
+  <main id="app-main">
+    <!-- ABA 1: MAPA -->
+    <section id="view-map" class="tab-view active">
+      <aside id="map-sidebar" class="map-sidebar">
+        <div class="sidebar-section spoiler-card">
+          <div class="section-header" style="margin-bottom:6px">
+            <span class="section-label" style="margin:0;color:var(--gold)">Modo do Mapa</span>
+          </div>
+          <div class="mode-segmented" id="map-mode-seg" role="group" aria-label="Modo do Mapa">
+            <button type="button" class="mode-btn active" data-mode="spoiler_free">Sem Spoilers</button>
+            <button type="button" class="mode-btn" data-mode="assist">Auxílio</button>
+            <button type="button" class="mode-btn" data-mode="full">Completista</button>
+          </div>
+          <div id="map-mode-desc" class="switch-sub">Oculta santuários, koroks e segredos ainda não descobertos</div>
+          <div id="assist-controls" class="assist-box hidden">
+            <div class="assist-head">
+              <span>Raio do Radar</span>
+              <span id="assist-radius-val" class="radius-badge">200 m</span>
+            </div>
+            <input type="range" id="rng-assist-radius" class="assist-slider" min="50" max="1000" step="25" value="200" />
+            <div class="assist-ticks">
+              <span>50m</span><span>200m</span><span>500m</span><span>1000m</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="sidebar-section">
+          <div class="section-label">Camada do Mapa</div>
+          <div class="layer-pills">
+            <button class="layer-btn" data-layer="sky">
+              <img src="/api/icon/map/sky.png?v=4" alt="" onerror="this.style.display='none'" />
+              Céu
+            </button>
+            <button class="layer-btn active" data-layer="surface">
+              <img src="/api/icon/map/surface.png?v=4" alt="" onerror="this.style.display='none'" />
+              Superfície
+            </button>
+            <button class="layer-btn" data-layer="depths">
+              <img src="/api/icon/map/depths.png?v=4" alt="" onerror="this.style.display='none'" />
+              Profundezas
+            </button>
+          </div>
+          <div class="toggle-grid">
+            <label class="mini-check"><input type="checkbox" id="chk-fog" checked /> Só mapa revelado</label>
+            <label class="mini-check" title="Oculta baús, koroks, santuários concluídos, sapos, chefes e demais coletáveis já obtidos"><input type="checkbox" id="chk-hide-done" /> Ocultar coletados</label>
+            <label class="mini-check"><input type="checkbox" id="chk-autolayer" checked /> Auto-camada</label>
+            <label class="mini-check"><input type="checkbox" id="chk-follow" checked /> Seguir Link</label>
+            <label class="mini-check"><input type="checkbox" id="chk-heropath" checked /> Caminho do Herói</label>
+            <label class="mini-check"><input type="checkbox" id="chk-pins" checked /> Pinos e Carimbos</label>
+            <label class="mini-check"><input type="checkbox" id="chk-quests-map" checked /> Missões ativas</label>
+            <label class="mini-check"><input type="checkbox" id="chk-custom-map" checked /> Meus marcadores</label>
+          </div>
+        </div>
+
+        <div class="sidebar-section">
+          <input type="search" id="map-search" class="search-input" placeholder="Buscar loja, santuário, NPC, planta, monstro..." />
+          <div id="map-search-results" class="search-results hidden"></div>
+        </div>
+
+        <div class="sidebar-section categories-section">
+          <div class="section-header">
+            <span class="section-label">Filtros do Mapa</span>
+            <div class="quick-actions">
+              <button id="btn-cat-all" class="link-btn">Todos</button>
+              <button id="btn-cat-none" class="link-btn">Limpar</button>
+            </div>
+          </div>
+          <div id="map-categories" class="cat-list"></div>
+        </div>
+      </aside>
+
+      <div id="map-stage" class="map-stage">
+        <canvas id="map-canvas"></canvas>
+
+        <div class="map-toolbar">
+          <button id="btn-toggle-sidebar" class="tool-btn" title="Mostrar/Ocultar barra lateral">☰</button>
+          <button id="btn-recenter" class="tool-btn tool-primary" title="Centralizar no Link (Espaço)">⌖ Link</button>
+          <button id="btn-zoom-in" class="tool-btn" title="Aproximar">+</button>
+          <button id="btn-zoom-out" class="tool-btn" title="Afastar">−</button>
+          <button id="btn-new-marker" class="tool-btn tool-gold" title="Clique direito no mapa para marcar">+ Marcador</button>
+          <button id="btn-nearby" class="tool-btn" title="Mostrar pontos de interesse próximos no radar">📡 Por Perto</button>
+        </div>
+
+        <div id="wiki-filter-banner" class="wiki-filter-banner hidden"></div>
+
+        <div class="map-statusbar">
+          <span id="map-cursor-coords">X: 0 · Z: 0</span>
+          <span id="map-zoom-label">Superfície</span>
+        </div>
+
+        <!-- Drawer lateral direito de pontos próximos (Radar) -->
+        <aside id="map-nearby" class="map-detail nearby-drawer hidden"></aside>
+
+        <!-- Drawer lateral direito de detalhes / criação de marcador -->
+        <aside id="map-detail" class="map-detail hidden"></aside>
+      </div>
+    </section>
+
+    <!-- ABA 2: INVENTÁRIO -->
+    <section id="view-inventory" class="tab-view">
+      <div class="inv-top">
+        <div id="sages-strip" class="sages-strip"></div>
+        <div class="inv-controls">
+          <div id="inv-cats" class="pill-bar"></div>
+          <input type="search" id="inv-search" class="search-input compact" placeholder="Filtrar item na bolsa..." />
+        </div>
+      </div>
+      <div class="inv-body">
+        <div id="inv-grid" class="inv-grid"></div>
+        <aside id="inv-detail" class="detail-panel empty">
+          <div class="empty-hint">Selecione um item da bolsa para ver atributos, acoplamentos e descrição.</div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ABA 3: MISSÕES -->
+    <section id="view-quests" class="tab-view">
+      <div class="quests-header">
+        <div id="quest-cat-pills" class="pill-bar"></div>
+        <div id="quest-status-pills" class="pill-bar subtle"></div>
+        <input type="search" id="quest-search" class="search-input compact" placeholder="Buscar missão, NPC ou região..." />
+      </div>
+      <div class="quests-body">
+        <div id="quest-list" class="quest-list"></div>
+        <aside id="quest-detail" class="detail-panel empty">
+          <div class="empty-hint">Escolha uma missão no Diário de Aventura para ver os passos e o destino no mapa.</div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ABA 4: ARQUIVOS -->
+    <section id="view-archives" class="tab-view">
+      <div class="archives-header">
+        <div id="archive-subtabs" class="pill-bar">
+          <button class="pill active" data-sub="compendium">Enciclopédia</button>
+          <button class="pill" data-sub="profiles">Perfis</button>
+          <button class="pill" data-sub="recipes">Receitas</button>
+          <button class="pill" data-sub="memories">Memórias</button>
+          <button class="pill" data-sub="album">Álbum</button>
+        </div>
+        <div class="archive-filters">
+          <div id="archive-extra-filters" class="pill-bar subtle"></div>
+          <label class="mini-check"><input type="checkbox" id="chk-archive-spoiler" checked /> Ocultar não descobertos</label>
+          <input type="search" id="archive-search" class="search-input compact" placeholder="Buscar nos arquivos..." />
+        </div>
+      </div>
+      <div class="archives-body">
+        <div id="archive-grid" class="archive-grid"></div>
+        <aside id="archive-detail" class="detail-panel empty">
+          <div class="empty-hint">Selecione um registro para visualizar detalhes completos.</div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ABA 5: CATÁLOGO / WIKI DE ITENS -->
+    <section id="view-wiki" class="tab-view">
+      <div class="wiki-header">
+        <div id="wiki-cats" class="pill-bar"></div>
+        <div class="wiki-filters">
+          <label class="mini-check"><input type="checkbox" id="chk-wiki-shops-only" /> Apenas à venda</label>
+          <label class="mini-check"><input type="checkbox" id="chk-wiki-all-ranks" /> Mostrar variantes / internas</label>
+          <input type="search" id="wiki-search" class="search-input compact" placeholder="Buscar item, material, arma, receita..." />
+        </div>
+      </div>
+      <div class="wiki-body">
+        <div id="wiki-grid" class="wiki-grid"></div>
+        <aside id="wiki-detail" class="detail-panel empty">
+          <div class="empty-hint">Selecione um item do Catálogo para ver atributos e onde encontrá-lo em Hyrule.</div>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal de Configurações & Cache -->
+  <div id="settings-modal" class="overlay hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>Purah Pad — Status &amp; Sistema</h3>
+        <button id="btn-close-settings" class="icon-btn">✕</button>
+      </div>
+      <div id="settings-info" class="settings-info"></div>
+      <div class="modal-actions">
+        <button id="btn-rebuild-cache" class="btn btn-gold">Reconstruir Cache do RomFS</button>
+        <button id="btn-close-settings-2" class="btn">Fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lightbox de Foto do Álbum -->
+  <div id="photo-lightbox" class="overlay hidden">
+    <div class="lightbox-card">
+      <button id="btn-close-lightbox" class="lightbox-close">✕</button>
+      <img id="lightbox-img" src="" alt="Foto do Álbum" />
+      <div id="lightbox-caption" class="lightbox-caption"></div>
+    </div>
+  </div>
+
+  <script src="/map.js?v=4"></script>
+  <script src="/app.js?v=4"></script>
+</body>
+</html>

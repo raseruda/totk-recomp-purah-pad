@@ -1,0 +1,18 @@
+# Extracted game assets / cache / user saves
+cache/
+data/
+mod_release/
+mod_native/build/
+__pycache__/
+*.pyc
+*.pyo
+
+# Release archives & compiled binaries
+*.zip
+*.dll
+*.obj
+*.lib
+*.exp
+*.sav
+.vscode/
+.idea/
