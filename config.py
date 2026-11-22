@@ -6,10 +6,11 @@ import json
 import locale
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
-ROOT_DIR = Path(__file__).resolve().parent
+ROOT_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 DEFAULT_GAME_DIR = Path(r"C:\Games\The Legend of Zelda - Tears of the Kingdom")
 CACHE_DIR = ROOT_DIR / "cache"
 TILES_CACHE_DIR = CACHE_DIR / "tiles"
@@ -243,6 +244,10 @@ def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     return cfg
 
 
+def _looks_like_game_dir(p: Path) -> bool:
+    return (p / "totk.exe").is_file() or (p / "romfs").is_dir() or (p / "totk.ini").is_file()
+
+
 def get_game_dir(override: str | Path | None = None) -> Path:
     """Resolve o diretório de instalação do TotK Recomp."""
     if override:
@@ -250,9 +255,16 @@ def get_game_dir(override: str | Path | None = None) -> Path:
     env = os.environ.get("TOTK_GAME_DIR")
     if env:
         return Path(env)
-    if (ROOT_DIR.parent / "totk.exe").is_file():
+    if _looks_like_game_dir(ROOT_DIR.parent):
         return ROOT_DIR.parent
-    return Path(load_settings().get("game_dir") or DEFAULT_GAME_DIR)
+    if _looks_like_game_dir(ROOT_DIR):
+        return ROOT_DIR
+    saved = load_settings().get("game_dir")
+    if saved and _looks_like_game_dir(Path(saved)):
+        return Path(saved)
+    if DEFAULT_GAME_DIR.is_dir():
+        return DEFAULT_GAME_DIR
+    return ROOT_DIR.parent
 
 
 def find_latest_save_slot(game_dir: Path | str | None = None) -> tuple[Path | None, Path | None]:

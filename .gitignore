@@ -1,8 +1,12 @@
-# Extracted game assets / cache / user saves
+# Extracted game assets / cache / user saves / logs
 cache/
 data/
 mod_release/
 mod_native/build/
+dist/
+build/
+*.spec
+*.log
 __pycache__/
 *.pyc
 *.pyo

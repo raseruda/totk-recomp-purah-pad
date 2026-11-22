@@ -1,6 +1,7 @@
 """Compila o mod drop-in winmm.dll (proxy x64) e empacota a pasta mod_release/ pronta para uso."""
 from __future__ import annotations
 
+import argparse
 import os
 import shutil
 import struct
@@ -61,7 +62,7 @@ def parse_pe_exports(dll_path: Path) -> list[tuple[int, str | None]]:
     return exports
 
 
-def generate_sources(exports: list[tuple[int, str | None]], pythonw_fallback: str) -> None:
+def generate_sources(exports: list[tuple[int, str | None]]) -> None:
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
     n = len(exports)
 
@@ -90,10 +91,10 @@ def generate_sources(exports: list[tuple[int, str | None]], pythonw_fallback: st
         c_names.append(f'"{name}"' if name else "NULL")
         c_ords.append(str(ordinal))
 
-    escaped_py = pythonw_fallback.replace("\\", "\\\\")
     c_src = f'''#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <wchar.h>
+#include <wctype.h>
 
 #define NUM_EXPORTS {n}
 
@@ -132,18 +133,28 @@ static int ends_with_ci(const wchar_t *str, const wchar_t *suffix) {{
     return CompareStringOrdinal(str + (sl - xl), xl, suffix, xl, TRUE) == CSTR_EQUAL;
 }}
 
+static int contains_ci(const wchar_t *hay, const wchar_t *needle) {{
+    int hl = lstrlenW(hay);
+    int nl = lstrlenW(needle);
+    if (nl <= 0 || hl < nl) return 0;
+    for (int i = 0; i <= hl - nl; ++i) {{
+        if (CompareStringOrdinal(hay + i, nl, needle, nl, TRUE) == CSTR_EQUAL) return 1;
+    }}
+    return 0;
+}}
+
 static int file_exists(const wchar_t *path) {{
     DWORD attr = GetFileAttributesW(path);
     return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
 }}
 
 static int find_pythonw(wchar_t *out, DWORD cap) {{
-    if (SearchPathW(NULL, L"pythonw.exe", NULL, cap, out, NULL) > 0) return 1;
+    if (SearchPathW(NULL, L"pythonw.exe", NULL, cap, out, NULL) > 0 && !contains_ci(out, L"WindowsApps")) return 1;
     wchar_t local[MAX_PATH];
     if (GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH) > 0) {{
         static const wchar_t *const rels[] = {{
-            L"\\\\Programs\\\\Python\\\\Python312\\\\pythonw.exe",
             L"\\\\Programs\\\\Python\\\\Python313\\\\pythonw.exe",
+            L"\\\\Programs\\\\Python\\\\Python312\\\\pythonw.exe",
             L"\\\\Programs\\\\Python\\\\Python311\\\\pythonw.exe",
             L"\\\\Programs\\\\Python\\\\Python310\\\\pythonw.exe",
         }};
@@ -152,12 +163,7 @@ static int find_pythonw(wchar_t *out, DWORD cap) {{
             if (file_exists(out)) return 1;
         }}
     }}
-    static const wchar_t *const fallback = L"{escaped_py}";
-    if (fallback[0] && file_exists(fallback)) {{
-        lstrcpynW(out, fallback, cap);
-        return 1;
-    }}
-    if (SearchPathW(NULL, L"python.exe", NULL, cap, out, NULL) > 0) return 1;
+    if (SearchPathW(NULL, L"python.exe", NULL, cap, out, NULL) > 0 && !contains_ci(out, L"WindowsApps")) return 1;
     return 0;
 }}
 
@@ -165,6 +171,8 @@ static DWORD WINAPI launch_purah_pad_thread(LPVOID param) {{
     HMODULE hSelf = (HMODULE)param;
     wchar_t mod_path[MAX_PATH * 2];
     wchar_t game_dir[MAX_PATH * 2];
+    wchar_t purah_dir[MAX_PATH * 2];
+    wchar_t purah_exe[MAX_PATH * 2];
     wchar_t launcher_py[MAX_PATH * 2];
     wchar_t python_exe[MAX_PATH * 2];
     wchar_t cmd_line[MAX_PATH * 6];
@@ -172,7 +180,6 @@ static DWORD WINAPI launch_purah_pad_thread(LPVOID param) {{
     DWORD n = GetModuleFileNameW(hSelf, mod_path, MAX_PATH * 2);
     if (n == 0 || n >= MAX_PATH * 2) return 0;
 
-    // Extrai diretório da DLL (pasta do jogo)
     lstrcpynW(game_dir, mod_path, MAX_PATH * 2);
     int last_sep = -1;
     for (int i = 0; game_dir[i]; ++i) {{
@@ -181,12 +188,36 @@ static DWORD WINAPI launch_purah_pad_thread(LPVOID param) {{
     if (last_sep <= 0) return 0;
     game_dir[last_sep] = L'\\0';
 
-    swprintf_s(launcher_py, MAX_PATH * 2, L"%ls\\\\PurahPad\\\\launcher.py", game_dir);
-    if (!file_exists(launcher_py)) return 0;
-
-    if (!find_pythonw(python_exe, MAX_PATH * 2)) return 0;
+    swprintf_s(purah_dir, MAX_PATH * 2, L"%ls\\\\PurahPad", game_dir);
+    swprintf_s(purah_exe, MAX_PATH * 2, L"%ls\\\\PurahPad.exe", purah_dir);
 
     DWORD pid = GetCurrentProcessId();
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&si, sizeof(si));
+    ZeroMemory(&pi, sizeof(pi));
+    si.cb = sizeof(si);
+
+    if (file_exists(purah_exe)) {{
+        swprintf_s(
+            cmd_line,
+            MAX_PATH * 6,
+            L"\\"%ls\\" --game-dir \\"%ls\\" --watch-pid %lu",
+            purah_exe,
+            game_dir,
+            (unsigned long)pid
+        );
+        if (CreateProcessW(purah_exe, cmd_line, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, purah_dir, &si, &pi)) {{
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+        }}
+        return 0;
+    }}
+
+    swprintf_s(launcher_py, MAX_PATH * 2, L"%ls\\\\launcher.py", purah_dir);
+    if (!file_exists(launcher_py)) return 0;
+    if (!find_pythonw(python_exe, MAX_PATH * 2)) return 0;
+
     swprintf_s(
         cmd_line,
         MAX_PATH * 6,
@@ -196,14 +227,7 @@ static DWORD WINAPI launch_purah_pad_thread(LPVOID param) {{
         game_dir,
         (unsigned long)pid
     );
-
-    STARTUPINFOW si;
-    PROCESS_INFORMATION pi;
-    ZeroMemory(&si, sizeof(si));
-    ZeroMemory(&pi, sizeof(pi));
-    si.cb = sizeof(si);
-
-    if (CreateProcessW(python_exe, cmd_line, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, game_dir, &si, &pi)) {{
+    if (CreateProcessW(python_exe, cmd_line, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, purah_dir, &si, &pi)) {{
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
     }}
@@ -262,42 +286,101 @@ def compile_proxy() -> Path:
     return out_dll
 
 
-def package_release(dll_path: Path) -> None:
+def build_standalone_exe() -> Path:
+    """Empacota o Purah Pad em PurahPad.exe standalone via PyInstaller (--onedir --noconsole)."""
+    dist_dir = BUILD_DIR / "dist"
+    work_dir = BUILD_DIR / "work"
+    for d in (dist_dir, work_dir):
+        if d.exists():
+            shutil.rmtree(d)
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "PyInstaller",
+        "--noconfirm",
+        "--clean",
+        "--onedir",
+        "--noconsole",
+        "--name",
+        "PurahPad",
+        "--distpath",
+        str(dist_dir),
+        "--workpath",
+        str(work_dir),
+        "--specpath",
+        str(BUILD_DIR),
+        "--paths",
+        str(ROOT_DIR),
+        "--collect-all",
+        "texture2ddecoder",
+        "--collect-all",
+        "zstandard",
+        "--collect-submodules",
+        "PIL",
+        "--hidden-import",
+        "config",
+        "--hidden-import",
+        "totk_formats",
+        "--hidden-import",
+        "asset_builder",
+        "--hidden-import",
+        "save_reader",
+        "--hidden-import",
+        "live_memory",
+        "--hidden-import",
+        "server",
+        str(ROOT_DIR / "launcher.py"),
+    ]
+    print("Executando PyInstaller para PurahPad.exe standalone...")
+    res = subprocess.run(cmd, cwd=str(ROOT_DIR))
+    if res.returncode != 0:
+        raise RuntimeError(f"PyInstaller falhou com código {res.returncode}")
+
+    out_dir = dist_dir / "PurahPad"
+    if not (out_dir / "PurahPad.exe").is_file():
+        raise FileNotFoundError(f"PurahPad.exe não encontrado em {out_dir}")
+    return out_dir
+
+
+def package_release(dll_path: Path, standalone_dir: Path | None) -> None:
     if RELEASE_DIR.exists():
         shutil.rmtree(RELEASE_DIR)
+    RELEASE_DIR.mkdir(parents=True, exist_ok=True)
     pp_dir = RELEASE_DIR / "PurahPad"
-    pp_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(dll_path, RELEASE_DIR / "winmm.dll")
 
-    for py_name in ("config.py", "totk_formats.py", "asset_builder.py", "save_reader.py", "live_memory.py", "server.py", "launcher.py"):
-        shutil.copy2(ROOT_DIR / py_name, pp_dir / py_name)
-    shutil.copytree(ROOT_DIR / "web", pp_dir / "web")
+    if standalone_dir is not None:
+        shutil.copytree(standalone_dir, pp_dir)
+    else:
+        pp_dir.mkdir(parents=True, exist_ok=True)
+        for py_name in ("config.py", "totk_formats.py", "asset_builder.py", "save_reader.py", "live_memory.py", "server.py", "launcher.py"):
+            shutil.copy2(ROOT_DIR / py_name, pp_dir / py_name)
 
-    readme = (
-        "Purah Pad — Mod Auto-Start para TotK Recomp (v1.4.3)\n"
-        "====================================================\n\n"
-        "Instalação:\n"
-        "1. Copie `winmm.dll` e a pasta `PurahPad` para a pasta onde está o `totk.exe`.\n"
-        "2. Ao abrir `totk.exe`, o Purah Pad abre automaticamente no Monitor 2.\n"
-        "3. Quando o jogo é fechado, o Purah Pad fecha automaticamente.\n\n"
-        "Requisitos:\n"
-        "- Python 3.12+ com pacotes: pillow, texture2ddecoder, zstandard\n"
-        "- Microsoft Edge ou Google Chrome instalado\n"
-    )
-    (RELEASE_DIR / "LEIA-ME.txt").write_text(readme, encoding="utf-8")
+    shutil.copytree(ROOT_DIR / "web", pp_dir / "web")
+    if (ROOT_DIR / "Iniciar Purah Pad.bat").is_file():
+        shutil.copy2(ROOT_DIR / "Iniciar Purah Pad.bat", pp_dir / "Iniciar Purah Pad.bat")
+    if (ROOT_DIR / "README.md").is_file():
+        shutil.copy2(ROOT_DIR / "README.md", RELEASE_DIR / "README.md")
+    if (ROOT_DIR / "LICENSE").is_file():
+        shutil.copy2(ROOT_DIR / "LICENSE", RELEASE_DIR / "LICENSE")
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser(description="Compila winmm.dll e gera o pacote standalone do Purah Pad.")
+    ap.add_argument("--proxy-only", action="store_true", help="Compila apenas winmm.dll sem rodar PyInstaller")
+    args = ap.parse_args()
+
     exports = parse_pe_exports(SYSTEM_WINMM)
     print(f"Exports detectados em {SYSTEM_WINMM}: {len(exports)}")
-    pyw = Path(sys.executable).with_name("pythonw.exe")
-    py_fb = str(pyw if pyw.is_file() else Path(sys.executable))
-    generate_sources(exports, py_fb)
+    generate_sources(exports)
     dll_path = compile_proxy()
     out_exports = parse_pe_exports(dll_path)
     print(f"winmm.dll compilada ({dll_path.stat().st_size} bytes), exports={len(out_exports)}")
     assert len(out_exports) == len(exports)
-    package_release(dll_path)
+
+    standalone_dir = None if args.proxy_only else build_standalone_exe()
+    package_release(dll_path, standalone_dir)
     print(f"Pacote pronto em {RELEASE_DIR}")
 
 

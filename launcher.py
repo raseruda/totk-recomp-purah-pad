@@ -2,17 +2,20 @@
 from __future__ import annotations
 
 import ctypes
+import multiprocessing
 import os
 import socket
 import subprocess
 import sys
 import threading
 import time
+import traceback
+import webbrowser
 from ctypes import wintypes
 from pathlib import Path
 from typing import Any
 
-from config import CACHE_DIR, DEFAULT_PORT, load_settings
+from config import CACHE_DIR, DATA_DIR, DEFAULT_PORT, ensure_dirs, get_game_dir, load_settings
 from server import create_server
 
 MONITORINFOF_PRIMARY = 0x00000001
@@ -77,6 +80,39 @@ _user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, 
 _user32.PostMessageW.restype = wintypes.BOOL
 _user32.SetForegroundWindow.argtypes = [wintypes.HWND]
 _user32.SetForegroundWindow.restype = wintypes.BOOL
+_user32.MessageBoxW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.UINT]
+_user32.MessageBoxW.restype = ctypes.c_int
+
+
+def _setup_logging() -> None:
+    """Garante stdout/stderr válidos mesmo em build --noconsole e registra log em data/purah_pad.log."""
+    ensure_dirs()
+    log_path = DATA_DIR / "purah_pad.log"
+    try:
+        fh = open(log_path, "a", encoding="utf-8", buffering=1)
+        if sys.stdout is None:
+            sys.stdout = fh
+        if sys.stderr is None:
+            sys.stderr = fh
+    except OSError:
+        if sys.stdout is None:
+            sys.stdout = open(os.devnull, "w", encoding="utf-8")
+        if sys.stderr is None:
+            sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
+
+def _log(msg: str) -> None:
+    line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
+    try:
+        print(line, flush=True)
+    except Exception:
+        pass
+    try:
+        ensure_dirs()
+        with open(DATA_DIR / "purah_pad.log", "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
 
 
 def list_monitors() -> list[dict[str, Any]]:
@@ -115,7 +151,7 @@ def pick_secondary_monitor() -> dict[str, Any]:
 
 
 def find_browser_executable() -> Path | None:
-    """Encontra msedge.exe ou chrome.exe instalado."""
+    """Encontra Edge, Chrome, Brave ou Vivaldi (caminhos comuns + Registro do Windows)."""
     pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
     pf = os.environ.get("ProgramFiles", r"C:\Program Files")
     local = os.environ.get("LOCALAPPDATA", "")
@@ -124,9 +160,32 @@ def find_browser_executable() -> Path | None:
         Path(pf) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
         Path(pf) / "Google" / "Chrome" / "Application" / "chrome.exe",
         Path(pf86) / "Google" / "Chrome" / "Application" / "chrome.exe",
+        Path(pf) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
+        Path(pf86) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
     ]
     if local:
-        candidates.append(Path(local) / "Google" / "Chrome" / "Application" / "chrome.exe")
+        candidates.extend([
+            Path(local) / "Google" / "Chrome" / "Application" / "chrome.exe",
+            Path(local) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
+            Path(local) / "BraveSoftware" / "Brave-Browser" / "Application" / "brave.exe",
+            Path(local) / "Vivaldi" / "Application" / "vivaldi.exe",
+        ])
+
+    try:
+        import winreg
+
+        for exe_name in ("msedge.exe", "chrome.exe", "brave.exe", "vivaldi.exe"):
+            for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                try:
+                    with winreg.OpenKey(hive, rf"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{exe_name}") as k:
+                        val, _ = winreg.QueryValueEx(k, None)
+                        if val:
+                            candidates.append(Path(str(val).strip('"')))
+                except OSError:
+                    continue
+    except Exception:
+        pass
+
     for c in candidates:
         if c.is_file():
             return c
@@ -209,104 +268,154 @@ def _watch_parent_pid(pid: int, on_exit: Any) -> None:
 
 
 def main() -> None:
+    multiprocessing.freeze_support()
     import argparse
-    from config import get_game_dir
+
+    _setup_logging()
 
     ap = argparse.ArgumentParser(description="Inicia o Purah Pad maximizado no Monitor 2.")
     ap.add_argument("--lan", action="store_true")
     ap.add_argument("--dry-run", action="store_true", help="Apenas mostra monitores e navegador detectados")
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--game-dir", default=None)
+    ap.add_argument("--port", type=int, default=0)
     ap.add_argument("--watch-pid", type=int, default=0)
     args = ap.parse_args()
 
-    mon = pick_secondary_monitor()
-    browser = find_browser_executable()
-    gdir = get_game_dir(args.game_dir)
-    if args.dry_run:
-        print("Game dir:", gdir)
-        print("Monitores:", list_monitors())
-        print("Alvo (Monitor 2):", mon)
-        print("Navegador:", browser)
-        return
+    try:
+        mon = pick_secondary_monitor()
+        browser = find_browser_executable()
+        gdir = get_game_dir(args.game_dir)
+        _log(f"Starting Purah Pad: game_dir={gdir}, browser={browser}, watch_pid={args.watch_pid}")
 
-    mutex = _kernel32.CreateMutexW(None, False, "Local\\TotK_PurahPad_Launcher_Mutex")
-    if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
-        hwnd = _find_app_window(None)
-        if hwnd:
-            _user32.ShowWindow(hwnd, SW_MAXIMIZE)
-            _user32.SetForegroundWindow(hwnd)
-        if mutex:
-            _kernel32.CloseHandle(mutex)
-        return
+        if args.dry_run:
+            print("Game dir:", gdir)
+            print("Monitores:", list_monitors())
+            print("Alvo (Monitor 2):", mon)
+            print("Navegador:", browser)
+            return
 
-    settings = load_settings()
-    port = pick_free_port(int(settings.get("port", DEFAULT_PORT)))
-    srv, runtime = create_server(game_dir=gdir, port=port, lan=args.lan)
-    srv_thread = threading.Thread(target=srv.serve_forever, daemon=True, name="HTTPServer")
-    srv_thread.start()
+        mutex = _kernel32.CreateMutexW(None, False, "Local\\TotK_PurahPad_Launcher_Mutex")
+        if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+            hwnd = _find_app_window(None)
+            if hwnd:
+                _user32.ShowWindow(hwnd, SW_MAXIMIZE)
+                _user32.SetForegroundWindow(hwnd)
+            if mutex:
+                _kernel32.CloseHandle(mutex)
+            return
 
-    url = f"http://127.0.0.1:{runtime.port}"
-    print(f"Purah Pad rodando em {url} -> Monitor {mon['device']} ({mon['width']}x{mon['height']} @ {mon['x']},{mon['y']})")
+        settings = load_settings()
+        preferred_port = args.port if args.port > 0 else int(settings.get("port", DEFAULT_PORT))
+        port = preferred_port if args.port > 0 else pick_free_port(preferred_port)
+        srv, runtime = create_server(game_dir=gdir, port=port, lan=args.lan)
+        srv_thread = threading.Thread(target=srv.serve_forever, daemon=True, name="HTTPServer")
+        srv_thread.start()
 
-    if args.no_browser or browser is None:
+        url = f"http://127.0.0.1:{runtime.port}"
+        _log(f"HTTP server listening at {url} (target monitor {mon['device']} {mon['width']}x{mon['height']})")
+
+        if args.no_browser:
+            if args.watch_pid:
+                threading.Thread(
+                    target=_watch_parent_pid,
+                    args=(args.watch_pid, lambda: runtime.stop_event.set()),
+                    daemon=True,
+                ).start()
+            try:
+                while not runtime.stop_event.is_set():
+                    time.sleep(0.5)
+            except KeyboardInterrupt:
+                pass
+            finally:
+                runtime.stop_event.set()
+                srv.shutdown()
+                srv.server_close()
+                if mutex:
+                    _kernel32.CloseHandle(mutex)
+            return
+
+        proc: subprocess.Popen[Any] | None = None
+        if browser is not None:
+            profile_dir = CACHE_DIR / "edge_profile"
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            cmd = [
+                str(browser),
+                f"--app={url}",
+                f"--user-data-dir={profile_dir}",
+                "--new-window",
+                "--no-first-run",
+                "--no-default-browser-check",
+                f"--window-position={mon['x']},{mon['y']}",
+                f"--window-size={mon['width']},{mon['height']}",
+            ]
+            proc = subprocess.Popen(cmd)
+            move_window_to_monitor(proc.pid, mon, timeout_s=8.0)
+        else:
+            _log("No Chromium browser executable found; falling back to default system browser.")
+            webbrowser.open(url)
+
         if args.watch_pid:
+            def close_browser_on_game_exit() -> None:
+                hwnd = _find_app_window(proc.pid if proc else None)
+                if hwnd:
+                    _user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+                    time.sleep(0.5)
+                if proc is not None and proc.poll() is None:
+                    proc.terminate()
+                runtime.stop_event.set()
+
             threading.Thread(
                 target=_watch_parent_pid,
-                args=(args.watch_pid, lambda: runtime.stop_event.set()),
+                args=(args.watch_pid, close_browser_on_game_exit),
                 daemon=True,
             ).start()
+
+        start_ts = time.monotonic()
+        saw_window = _find_app_window(proc.pid if proc else None) is not None
         try:
             while not runtime.stop_event.is_set():
                 time.sleep(0.5)
+                elapsed = time.monotonic() - start_ts
+                hwnd = _find_app_window(proc.pid if proc else None)
+                if hwnd:
+                    saw_window = True
+                if proc is None:
+                    # Fallback browser mode: keep serving unless game exit signaled or Purah Pad window was opened and then closed
+                    if saw_window and not hwnd and elapsed > 10.0 and not args.watch_pid:
+                        break
+                    continue
+
+                proc_alive = proc.poll() is None
+                if proc_alive:
+                    continue
+                # Se o processo devolveu handoff para janela já aberta do Edge/Chrome, aguarda a janela aparecer/fechar
+                if elapsed < 10.0:
+                    continue
+                if hwnd:
+                    continue
+                # Janela foi fechada pelo usuário ou não abriu após janela de tolerância
+                break
         except KeyboardInterrupt:
-            pass
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
         finally:
             runtime.stop_event.set()
             srv.shutdown()
             srv.server_close()
             if mutex:
                 _kernel32.CloseHandle(mutex)
-        return
-
-    profile_dir = CACHE_DIR / "edge_profile"
-    profile_dir.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        str(browser),
-        f"--app={url}",
-        f"--user-data-dir={profile_dir}",
-        "--new-window",
-        f"--window-position={mon['x']},{mon['y']}",
-        f"--window-size={mon['width']},{mon['height']}",
-    ]
-    proc = subprocess.Popen(cmd)
-    move_window_to_monitor(proc.pid, mon, timeout_s=8.0)
-
-    if args.watch_pid:
-        def close_browser_on_game_exit() -> None:
-            hwnd = _find_app_window(proc.pid)
-            if hwnd:
-                _user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
-                time.sleep(0.5)
-            if proc.poll() is None:
-                proc.terminate()
-
-        threading.Thread(
-            target=_watch_parent_pid,
-            args=(args.watch_pid, close_browser_on_game_exit),
-            daemon=True,
-        ).start()
-
-    try:
-        proc.wait()
-    except KeyboardInterrupt:
-        proc.terminate()
-    finally:
-        runtime.stop_event.set()
-        srv.shutdown()
-        srv.server_close()
-        if mutex:
-            _kernel32.CloseHandle(mutex)
+    except Exception:
+        tb = traceback.format_exc()
+        _log(f"FATAL ERROR:\n{tb}")
+        if not args.watch_pid and not args.no_browser:
+            _user32.MessageBoxW(
+                None,
+                f"Purah Pad failed to start:\n\n{tb}\n\nLog: {DATA_DIR / 'purah_pad.log'}",
+                "Purah Pad — Error",
+                0x10,
+            )
+        raise
 
 
 if __name__ == "__main__":
