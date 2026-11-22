@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import os
 import shutil
 import struct
 import subprocess
 import sys
+import urllib.request
+import zipfile
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -14,6 +17,32 @@ BUILD_DIR = Path(__file__).resolve().parent / "build"
 RELEASE_DIR = ROOT_DIR / "mod_release"
 SYSTEM_WINMM = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "winmm.dll"
 VCVARS64 = Path(r"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat")
+
+EMBED_PYTHON_URL = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip"
+KEEP_RUNTIME_BINARIES = frozenset({
+    "python312.dll",
+    "python3.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+    "libffi-8.dll",
+    "_ctypes.pyd",
+    "_socket.pyd",
+    "select.pyd",
+    "_queue.pyd",
+    "unicodedata.pyd",
+    "_uuid.pyd",
+    "_wmi.pyd",
+    "pyexpat.pyd",
+})
+PY_SOURCE_FILES = (
+    "config.py",
+    "totk_formats.py",
+    "asset_builder.py",
+    "save_reader.py",
+    "live_memory.py",
+    "server.py",
+    "launcher.py",
+)
 
 
 def parse_pe_exports(dll_path: Path) -> list[tuple[int, str | None]]:
@@ -94,13 +123,20 @@ def generate_sources(exports: list[tuple[int, str | None]]) -> None:
     c_src = f'''#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <wchar.h>
-#include <wctype.h>
+#include <stdio.h>
 
 #define NUM_EXPORTS {n}
+#ifndef LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR
+#define LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR 0x00000100
+#endif
+#ifndef LOAD_LIBRARY_SEARCH_DEFAULT_DIRS
+#define LOAD_LIBRARY_SEARCH_DEFAULT_DIRS 0x00001000
+#endif
 
 FARPROC g_winmm_procs[NUM_EXPORTS] = {{0}};
 static HMODULE g_real_winmm = NULL;
 static HANDLE g_mutex = NULL;
+static volatile HWND g_app_hwnd = NULL;
 
 static const char *const g_export_names[NUM_EXPORTS] = {{
     {", ".join(c_names)}
@@ -133,49 +169,44 @@ static int ends_with_ci(const wchar_t *str, const wchar_t *suffix) {{
     return CompareStringOrdinal(str + (sl - xl), xl, suffix, xl, TRUE) == CSTR_EQUAL;
 }}
 
-static int contains_ci(const wchar_t *hay, const wchar_t *needle) {{
-    int hl = lstrlenW(hay);
-    int nl = lstrlenW(needle);
-    if (nl <= 0 || hl < nl) return 0;
-    for (int i = 0; i <= hl - nl; ++i) {{
-        if (CompareStringOrdinal(hay + i, nl, needle, nl, TRUE) == CSTR_EQUAL) return 1;
-    }}
-    return 0;
-}}
-
 static int file_exists(const wchar_t *path) {{
     DWORD attr = GetFileAttributesW(path);
     return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
 }}
 
-static int find_pythonw(wchar_t *out, DWORD cap) {{
-    if (SearchPathW(NULL, L"pythonw.exe", NULL, cap, out, NULL) > 0 && !contains_ci(out, L"WindowsApps")) return 1;
-    wchar_t local[MAX_PATH];
-    if (GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH) > 0) {{
-        static const wchar_t *const rels[] = {{
-            L"\\\\Programs\\\\Python\\\\Python313\\\\pythonw.exe",
-            L"\\\\Programs\\\\Python\\\\Python312\\\\pythonw.exe",
-            L"\\\\Programs\\\\Python\\\\Python311\\\\pythonw.exe",
-            L"\\\\Programs\\\\Python\\\\Python310\\\\pythonw.exe",
-        }};
-        for (int i = 0; i < 4; ++i) {{
-            swprintf_s(out, cap, L"%ls%ls", local, rels[i]);
-            if (file_exists(out)) return 1;
-        }}
+static void log_loader_error(const wchar_t *purah_dir, const char *msg) {{
+    wchar_t data_dir[MAX_PATH * 2];
+    wchar_t log_path[MAX_PATH * 2];
+    swprintf_s(data_dir, MAX_PATH * 2, L"%ls\\\\data", purah_dir);
+    CreateDirectoryW(data_dir, NULL);
+    swprintf_s(log_path, MAX_PATH * 2, L"%ls\\\\purah_pad_loader.log", data_dir);
+    HANDLE hf = CreateFileW(
+        log_path,
+        FILE_APPEND_DATA,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        NULL,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL
+    );
+    if (hf != INVALID_HANDLE_VALUE) {{
+        DWORD written = 0;
+        DWORD len = (DWORD)lstrlenA(msg);
+        WriteFile(hf, msg, len, &written, NULL);
+        WriteFile(hf, "\\r\\n", 2, &written, NULL);
+        CloseHandle(hf);
     }}
-    if (SearchPathW(NULL, L"python.exe", NULL, cap, out, NULL) > 0 && !contains_ci(out, L"WindowsApps")) return 1;
-    return 0;
 }}
 
 static DWORD WINAPI launch_purah_pad_thread(LPVOID param) {{
     HMODULE hSelf = (HMODULE)param;
+    Sleep(250);
+
     wchar_t mod_path[MAX_PATH * 2];
     wchar_t game_dir[MAX_PATH * 2];
     wchar_t purah_dir[MAX_PATH * 2];
-    wchar_t purah_exe[MAX_PATH * 2];
-    wchar_t launcher_py[MAX_PATH * 2];
-    wchar_t python_exe[MAX_PATH * 2];
-    wchar_t cmd_line[MAX_PATH * 6];
+    wchar_t py_dir[MAX_PATH * 2];
+    wchar_t dll_path[MAX_PATH * 2];
 
     DWORD n = GetModuleFileNameW(hSelf, mod_path, MAX_PATH * 2);
     if (n == 0 || n >= MAX_PATH * 2) return 0;
@@ -189,53 +220,92 @@ static DWORD WINAPI launch_purah_pad_thread(LPVOID param) {{
     game_dir[last_sep] = L'\\0';
 
     swprintf_s(purah_dir, MAX_PATH * 2, L"%ls\\\\PurahPad", game_dir);
-    swprintf_s(purah_exe, MAX_PATH * 2, L"%ls\\\\PurahPad.exe", purah_dir);
+    swprintf_s(py_dir, MAX_PATH * 2, L"%ls\\\\python", purah_dir);
 
-    DWORD pid = GetCurrentProcessId();
-    STARTUPINFOW si;
-    PROCESS_INFORMATION pi;
-    ZeroMemory(&si, sizeof(si));
-    ZeroMemory(&pi, sizeof(pi));
-    si.cb = sizeof(si);
-
-    if (file_exists(purah_exe)) {{
-        swprintf_s(
-            cmd_line,
-            MAX_PATH * 6,
-            L"\\"%ls\\" --game-dir \\"%ls\\" --watch-pid %lu",
-            purah_exe,
-            game_dir,
-            (unsigned long)pid
-        );
-        if (CreateProcessW(purah_exe, cmd_line, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, purah_dir, &si, &pi)) {{
-            CloseHandle(pi.hThread);
-            CloseHandle(pi.hProcess);
+    static const wchar_t *const preload_dlls[] = {{
+        L"vcruntime140.dll",
+        L"vcruntime140_1.dll",
+        L"libffi-8.dll",
+        L"python3.dll"
+    }};
+    for (int i = 0; i < 4; ++i) {{
+        swprintf_s(dll_path, MAX_PATH * 2, L"%ls\\\\%ls", py_dir, preload_dlls[i]);
+        if (file_exists(dll_path)) {{
+            LoadLibraryExW(dll_path, NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
         }}
+    }}
+
+    swprintf_s(dll_path, MAX_PATH * 2, L"%ls\\\\python312.dll", py_dir);
+    if (!file_exists(dll_path)) {{
+        log_loader_error(purah_dir, "Missing PurahPad\\\\python\\\\python312.dll");
         return 0;
     }}
 
-    swprintf_s(launcher_py, MAX_PATH * 2, L"%ls\\\\launcher.py", purah_dir);
-    if (!file_exists(launcher_py)) return 0;
-    if (!find_pythonw(python_exe, MAX_PATH * 2)) return 0;
+    HMODULE hPy = LoadLibraryExW(dll_path, NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    if (!hPy) {{
+        log_loader_error(purah_dir, "LoadLibraryExW failed on PurahPad\\\\python\\\\python312.dll");
+        return 0;
+    }}
 
-    swprintf_s(
-        cmd_line,
-        MAX_PATH * 6,
-        L"\\"%ls\\" \\"%ls\\" --game-dir \\"%ls\\" --watch-pid %lu",
-        python_exe,
-        launcher_py,
-        game_dir,
-        (unsigned long)pid
+    typedef void (__cdecl *PFN_Py_InitializeEx)(int);
+    typedef int  (__cdecl *PFN_Py_IsInitialized)(void);
+    typedef int  (__cdecl *PFN_PyRun_SimpleString)(const char *);
+
+    PFN_Py_InitializeEx pInitEx = (PFN_Py_InitializeEx)GetProcAddress(hPy, "Py_InitializeEx");
+    PFN_Py_IsInitialized pIsInit = (PFN_Py_IsInitialized)GetProcAddress(hPy, "Py_IsInitialized");
+    PFN_PyRun_SimpleString pRunSimple = (PFN_PyRun_SimpleString)GetProcAddress(hPy, "PyRun_SimpleString");
+
+    if (!pInitEx || !pIsInit || !pRunSimple) {{
+        log_loader_error(purah_dir, "Failed to resolve CPython entry points in python312.dll");
+        return 0;
+    }}
+
+    if (!pIsInit()) {{
+        pInitEx(0);
+    }}
+
+    char utf8_gdir[MAX_PATH * 6];
+    int ulen = WideCharToMultiByte(CP_UTF8, 0, game_dir, -1, utf8_gdir, (int)sizeof(utf8_gdir), NULL, NULL);
+    if (ulen <= 1) {{
+        log_loader_error(purah_dir, "WideCharToMultiByte failed for game_dir");
+        return 0;
+    }}
+    int raw_bytes = ulen - 1;
+    char hex_gdir[MAX_PATH * 12 + 1];
+    static const char hex_digits[] = "0123456789abcdef";
+    for (int i = 0; i < raw_bytes; ++i) {{
+        unsigned char b = (unsigned char)utf8_gdir[i];
+        hex_gdir[i * 2] = hex_digits[(b >> 4) & 0xF];
+        hex_gdir[i * 2 + 1] = hex_digits[b & 0xF];
+    }}
+    hex_gdir[raw_bytes * 2] = '\\0';
+
+    char py_code[MAX_PATH * 16];
+    int nfmt = _snprintf_s(
+        py_code,
+        sizeof(py_code),
+        _TRUNCATE,
+        "import sys, os\\n"
+        "_gd = bytes.fromhex('%s').decode('utf-8')\\n"
+        "_pp = os.path.join(_gd, 'PurahPad')\\n"
+        "if _pp not in sys.path:\\n"
+        "    sys.path.insert(0, _pp)\\n"
+        "import launcher\\n"
+        "launcher.run_embedded(_gd, %llu)\\n",
+        hex_gdir,
+        (unsigned long long)(ULONG_PTR)&g_app_hwnd
     );
-    if (CreateProcessW(python_exe, cmd_line, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, purah_dir, &si, &pi)) {{
-        CloseHandle(pi.hThread);
-        CloseHandle(pi.hProcess);
+    if (nfmt < 0) {{
+        log_loader_error(purah_dir, "Python bootstrap script truncated");
+        return 0;
+    }}
+    if (pRunSimple(py_code) != 0) {{
+        log_loader_error(purah_dir, "PyRun_SimpleString returned non-zero");
     }}
     return 0;
 }}
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {{
-    (void)lpvReserved;
     if (fdwReason == DLL_PROCESS_ATTACH) {{
         DisableThreadLibraryCalls(hinstDLL);
         init_real_winmm();
@@ -250,7 +320,16 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {{
             }}
         }}
     }} else if (fdwReason == DLL_PROCESS_DETACH) {{
-        if (g_mutex) {{
+        HWND app_hwnd = g_app_hwnd;
+        if (app_hwnd != NULL) {{
+            HMODULE hUser32 = GetModuleHandleW(L"user32.dll");
+            if (hUser32) {{
+                typedef BOOL (WINAPI *PFN_PostMessageW)(HWND, UINT, WPARAM, LPARAM);
+                PFN_PostMessageW pPostMessageW = (PFN_PostMessageW)GetProcAddress(hUser32, "PostMessageW");
+                if (pPostMessageW) pPostMessageW(app_hwnd, 0x0010, 0, 0);
+            }}
+        }}
+        if (lpvReserved == NULL && g_mutex) {{
             CloseHandle(g_mutex);
             g_mutex = NULL;
         }}
@@ -286,76 +365,117 @@ def compile_proxy() -> Path:
     return out_dll
 
 
-def build_standalone_exe() -> Path:
-    """Empacota o Purah Pad em PurahPad.exe standalone via PyInstaller (--onedir --noconsole)."""
-    dist_dir = BUILD_DIR / "dist"
-    work_dir = BUILD_DIR / "work"
-    for d in (dist_dir, work_dir):
-        if d.exists():
-            shutil.rmtree(d)
+def _download_embed_python() -> Path:
+    """Baixa (com cache local) o pacote oficial embeddable do Python 3.12.10 x64."""
+    dl_dir = BUILD_DIR / "downloads"
+    dl_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = dl_dir / "python-3.12.10-embed-amd64.zip"
+    if zip_path.is_file() and zipfile.is_zipfile(zip_path):
+        return zip_path
+    print(f"Baixando Python 3.12.10 oficial embutido: {EMBED_PYTHON_URL}")
+    req = urllib.request.Request(EMBED_PYTHON_URL, headers={"User-Agent": "Mozilla/5.0"})
+    tmp_path = zip_path.with_suffix(".tmp")
+    with urllib.request.urlopen(req, timeout=60) as resp, tmp_path.open("wb") as out:
+        shutil.copyfileobj(resp, out)
+    if not zipfile.is_zipfile(tmp_path):
+        tmp_path.unlink(missing_ok=True)
+        raise RuntimeError("Arquivo baixado do Python embeddable não é um ZIP válido")
+    tmp_path.replace(zip_path)
+    return zip_path
 
-    cmd = [
-        sys.executable,
-        "-m",
-        "PyInstaller",
-        "--noconfirm",
-        "--clean",
-        "--onedir",
-        "--noconsole",
-        "--name",
-        "PurahPad",
-        "--distpath",
-        str(dist_dir),
-        "--workpath",
-        str(work_dir),
-        "--specpath",
-        str(BUILD_DIR),
-        "--paths",
-        str(ROOT_DIR),
-        "--collect-all",
-        "texture2ddecoder",
-        "--collect-all",
+
+def _copy_pkg_files(pkg_name: str, dst_root: Path, allowed_bins: set[str], allowed_py: set[str] | None = None) -> None:
+    """Copia apenas arquivos .py/py.typed e binários estritamente necessários de um pacote."""
+    mod = importlib.import_module(pkg_name)
+    src_dir = Path(mod.__file__).resolve().parent
+    dst_dir = dst_root / pkg_name
+    dst_dir.mkdir(parents=True, exist_ok=True)
+
+    for src in src_dir.rglob("*"):
+        if src.is_dir() or "__pycache__" in src.parts:
+            continue
+        rel = src.relative_to(src_dir)
+        name = src.name
+        if name in allowed_bins:
+            pass
+        elif src.suffix == ".py" or name == "py.typed":
+            if allowed_py is not None and name not in allowed_py:
+                continue
+        else:
+            continue
+        dst = dst_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+
+def build_embedded_python() -> Path:
+    """Monta o runtime oficial assinado do Python 3.12 sem .exe e sem arquivos .zip aninhados."""
+    emb_zip = _download_embed_python()
+    emb_dir = BUILD_DIR / "embedded_python"
+    if emb_dir.exists():
+        shutil.rmtree(emb_dir)
+    emb_dir.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(emb_zip) as zf:
+        zf.extractall(emb_dir)
+
+    stdlib_zip = emb_dir / "python312.zip"
+    if not stdlib_zip.is_file():
+        raise FileNotFoundError(f"python312.zip não encontrado em {emb_dir}")
+    lib_dir = emb_dir / "Lib"
+    lib_dir.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(stdlib_zip) as zf:
+        zf.extractall(lib_dir)
+    stdlib_zip.unlink()
+
+    for item in list(emb_dir.iterdir()):
+        if not item.is_file():
+            continue
+        suf = item.suffix.lower()
+        if suf in (".exe", ".zip", ".cat") or item.name.endswith("._pth"):
+            item.unlink()
+        elif suf in (".dll", ".pyd") and item.name not in KEEP_RUNTIME_BINARIES:
+            item.unlink()
+
+    (emb_dir / "python312._pth").write_text("Lib\n.\nsite-packages\n..\n", encoding="utf-8")
+
+    sp_dir = emb_dir / "site-packages"
+    sp_dir.mkdir(parents=True, exist_ok=True)
+    _copy_pkg_files("PIL", sp_dir, allowed_bins={"_imaging.cp312-win_amd64.pyd"})
+    _copy_pkg_files(
         "zstandard",
-        "--collect-submodules",
-        "PIL",
-        "--hidden-import",
-        "config",
-        "--hidden-import",
-        "totk_formats",
-        "--hidden-import",
-        "asset_builder",
-        "--hidden-import",
-        "save_reader",
-        "--hidden-import",
-        "live_memory",
-        "--hidden-import",
-        "server",
-        str(ROOT_DIR / "launcher.py"),
-    ]
-    print("Executando PyInstaller para PurahPad.exe standalone...")
-    res = subprocess.run(cmd, cwd=str(ROOT_DIR))
-    if res.returncode != 0:
-        raise RuntimeError(f"PyInstaller falhou com código {res.returncode}")
+        sp_dir,
+        allowed_bins={"backend_c.cp312-win_amd64.pyd"},
+        allowed_py={"__init__.py", "py.typed"},
+    )
+    _copy_pkg_files(
+        "texture2ddecoder",
+        sp_dir,
+        allowed_bins={"_texture2ddecoder.pyd"},
+        allowed_py={"__init__.py", "py.typed"},
+    )
 
-    out_dir = dist_dir / "PurahPad"
-    if not (out_dir / "PurahPad.exe").is_file():
-        raise FileNotFoundError(f"PurahPad.exe não encontrado em {out_dir}")
-    return out_dir
+    for cache_dir in emb_dir.rglob("__pycache__"):
+        if cache_dir.is_dir():
+            shutil.rmtree(cache_dir)
+
+    if not (emb_dir / "python312.dll").is_file():
+        raise FileNotFoundError(f"python312.dll ausente em {emb_dir}")
+    return emb_dir
 
 
-def package_release(dll_path: Path, standalone_dir: Path | None) -> None:
+def package_release(dll_path: Path, embedded_py_dir: Path | None) -> None:
     if RELEASE_DIR.exists():
         shutil.rmtree(RELEASE_DIR)
     RELEASE_DIR.mkdir(parents=True, exist_ok=True)
     pp_dir = RELEASE_DIR / "PurahPad"
+    pp_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(dll_path, RELEASE_DIR / "winmm.dll")
 
-    if standalone_dir is not None:
-        shutil.copytree(standalone_dir, pp_dir)
-    else:
-        pp_dir.mkdir(parents=True, exist_ok=True)
-        for py_name in ("config.py", "totk_formats.py", "asset_builder.py", "save_reader.py", "live_memory.py", "server.py", "launcher.py"):
-            shutil.copy2(ROOT_DIR / py_name, pp_dir / py_name)
+    for py_name in PY_SOURCE_FILES:
+        shutil.copy2(ROOT_DIR / py_name, pp_dir / py_name)
+    if embedded_py_dir is not None:
+        shutil.copytree(embedded_py_dir, pp_dir / "python")
 
     shutil.copytree(ROOT_DIR / "web", pp_dir / "web")
     if (ROOT_DIR / "Iniciar Purah Pad.bat").is_file():
@@ -367,8 +487,8 @@ def package_release(dll_path: Path, standalone_dir: Path | None) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Compila winmm.dll e gera o pacote standalone do Purah Pad.")
-    ap.add_argument("--proxy-only", action="store_true", help="Compila apenas winmm.dll sem rodar PyInstaller")
+    ap = argparse.ArgumentParser(description="Compila winmm.dll e gera o pacote standalone embutido do Purah Pad.")
+    ap.add_argument("--proxy-only", action="store_true", help="Compila apenas winmm.dll sem montar o runtime Python embutido")
     args = ap.parse_args()
 
     exports = parse_pe_exports(SYSTEM_WINMM)
@@ -379,8 +499,8 @@ def main() -> None:
     print(f"winmm.dll compilada ({dll_path.stat().st_size} bytes), exports={len(out_exports)}")
     assert len(out_exports) == len(exports)
 
-    standalone_dir = None if args.proxy_only else build_standalone_exe()
-    package_release(dll_path, standalone_dir)
+    embedded_py_dir = None if args.proxy_only else build_embedded_python()
+    package_release(dll_path, embedded_py_dir)
     print(f"Pacote pronto em {RELEASE_DIR}")
 
 

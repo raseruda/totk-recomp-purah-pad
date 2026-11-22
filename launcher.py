@@ -84,15 +84,20 @@ _user32.MessageBoxW.argtypes = [wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWST
 _user32.MessageBoxW.restype = ctypes.c_int
 
 
-def _setup_logging() -> None:
-    """Garante stdout/stderr válidos mesmo em build --noconsole e registra log em data/purah_pad.log."""
+_STDOUT_IS_LOG = False
+
+
+def _setup_logging(force_redirect: bool = False) -> None:
+    """Garante stdout/stderr válidos mesmo em build --noconsole/embutido e registra log em data/purah_pad.log."""
+    global _STDOUT_IS_LOG
     ensure_dirs()
     log_path = DATA_DIR / "purah_pad.log"
     try:
         fh = open(log_path, "a", encoding="utf-8", buffering=1)
-        if sys.stdout is None:
+        if force_redirect or sys.stdout is None:
             sys.stdout = fh
-        if sys.stderr is None:
+            _STDOUT_IS_LOG = True
+        if force_redirect or sys.stderr is None:
             sys.stderr = fh
     except OSError:
         if sys.stdout is None:
@@ -107,6 +112,8 @@ def _log(msg: str) -> None:
         print(line, flush=True)
     except Exception:
         pass
+    if _STDOUT_IS_LOG:
+        return
     try:
         ensure_dirs()
         with open(DATA_DIR / "purah_pad.log", "a", encoding="utf-8") as f:
@@ -267,6 +274,111 @@ def _watch_parent_pid(pid: int, on_exit: Any) -> None:
     on_exit()
 
 
+def _launch_browser_window(
+    url: str,
+    mon: dict[str, Any],
+    browser: Path | None,
+) -> tuple[subprocess.Popen[Any] | None, int | None]:
+    """Abre o navegador em modo app no monitor alvo sem herdar handles inválidos do processo pai."""
+    if browser is not None:
+        profile_dir = CACHE_DIR / "edge_profile"
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            str(browser),
+            f"--app={url}",
+            f"--user-data-dir={profile_dir}",
+            "--new-window",
+            "--no-first-run",
+            "--no-default-browser-check",
+            f"--window-position={mon['x']},{mon['y']}",
+            f"--window-size={mon['width']},{mon['height']}",
+        ]
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+        move_window_to_monitor(proc.pid, mon, timeout_s=8.0)
+        return proc, _find_app_window(proc.pid)
+    _log("No Chromium browser executable found; falling back to default system browser.")
+    webbrowser.open(url)
+    return None, None
+
+
+def _write_hwnd_slot(hwnd_slot_addr: int, hwnd: int | None) -> None:
+    """Atualiza g_app_hwnd no proxy nativo para fechamento limpo junto ao totk.exe."""
+    if hwnd_slot_addr:
+        ctypes.c_void_p.from_address(hwnd_slot_addr).value = int(hwnd) if hwnd else 0
+
+
+def run_embedded(game_dir: str, hwnd_slot_addr: int = 0) -> None:
+    """Executa o servidor e abre a janela Purah Pad diretamente embutido no processo do jogo."""
+    py_dir = Path(__file__).resolve().parent / "python"
+    if py_dir.is_dir() and hasattr(os, "add_dll_directory"):
+        try:
+            os.add_dll_directory(str(py_dir))
+        except OSError:
+            pass
+
+    _setup_logging(force_redirect=True)
+    mutex: int | None = None
+    srv: Any = None
+    runtime: Any = None
+
+    try:
+        mutex = _kernel32.CreateMutexW(None, False, "Local\\TotK_PurahPad_Launcher_Mutex")
+        if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+            hwnd = _find_app_window(None)
+            if hwnd:
+                _user32.ShowWindow(hwnd, SW_MAXIMIZE)
+                _user32.SetForegroundWindow(hwnd)
+                _write_hwnd_slot(hwnd_slot_addr, hwnd)
+            return
+
+        mon = pick_secondary_monitor()
+        browser = find_browser_executable()
+        env_gdir = os.environ.get("TOTK_GAME_DIR")
+        gdir = Path(env_gdir) if env_gdir else (Path(game_dir) if game_dir else get_game_dir())
+        settings = load_settings()
+        preferred_port = int(settings.get("port", DEFAULT_PORT))
+        port = pick_free_port(preferred_port)
+        srv, runtime = create_server(game_dir=gdir, port=port, lan=False)
+        threading.Thread(target=srv.serve_forever, daemon=True, name="HTTPServer").start()
+
+        url = f"http://127.0.0.1:{runtime.port}"
+        _log(
+            f"Embedded Purah Pad started: game_dir={gdir}, url={url}, "
+            f"browser={browser}, monitor={mon['device']} {mon['width']}x{mon['height']}"
+        )
+
+        proc: subprocess.Popen[Any] | None = None
+        if os.environ.get("PURAH_PAD_NO_BROWSER") != "1":
+            proc, hwnd = _launch_browser_window(url, mon, browser)
+            if hwnd:
+                _write_hwnd_slot(hwnd_slot_addr, hwnd)
+
+        while not runtime.stop_event.is_set():
+            time.sleep(1.0)
+            if hwnd_slot_addr:
+                active_hwnd = _find_app_window(None)
+                _write_hwnd_slot(hwnd_slot_addr, active_hwnd)
+    except Exception:
+        _log(f"EMBEDDED FATAL ERROR:\n{traceback.format_exc()}")
+    finally:
+        if runtime is not None:
+            runtime.stop_event.set()
+        if srv is not None:
+            try:
+                srv.shutdown()
+                srv.server_close()
+            except Exception:
+                pass
+        if mutex:
+            _kernel32.CloseHandle(mutex)
+
+
 def main() -> None:
     multiprocessing.freeze_support()
     import argparse
@@ -335,25 +447,7 @@ def main() -> None:
                     _kernel32.CloseHandle(mutex)
             return
 
-        proc: subprocess.Popen[Any] | None = None
-        if browser is not None:
-            profile_dir = CACHE_DIR / "edge_profile"
-            profile_dir.mkdir(parents=True, exist_ok=True)
-            cmd = [
-                str(browser),
-                f"--app={url}",
-                f"--user-data-dir={profile_dir}",
-                "--new-window",
-                "--no-first-run",
-                "--no-default-browser-check",
-                f"--window-position={mon['x']},{mon['y']}",
-                f"--window-size={mon['width']},{mon['height']}",
-            ]
-            proc = subprocess.Popen(cmd)
-            move_window_to_monitor(proc.pid, mon, timeout_s=8.0)
-        else:
-            _log("No Chromium browser executable found; falling back to default system browser.")
-            webbrowser.open(url)
+        proc, saw_hwnd = _launch_browser_window(url, mon, browser)
 
         if args.watch_pid:
             def close_browser_on_game_exit() -> None:
@@ -372,7 +466,7 @@ def main() -> None:
             ).start()
 
         start_ts = time.monotonic()
-        saw_window = _find_app_window(proc.pid if proc else None) is not None
+        saw_window = saw_hwnd is not None
         try:
             while not runtime.stop_event.is_set():
                 time.sleep(0.5)

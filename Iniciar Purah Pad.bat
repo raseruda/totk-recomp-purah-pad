@@ -2,8 +2,23 @@
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
-if exist "%~dp0PurahPad.exe" (
-    start "" "%~dp0PurahPad.exe" %*
+tasklist /FI "IMAGENAME eq totk.exe" 2>nul | find /I "totk.exe" >nul
+if not errorlevel 1 (
+    set "URL=http://127.0.0.1:8765"
+    for %%B in (
+        "%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"
+        "%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"
+        "%ProgramFiles%\Google\Chrome\Application\chrome.exe"
+        "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"
+        "%LocalAppData%\Google\Chrome\Application\chrome.exe"
+        "%LocalAppData%\Microsoft\Edge\Application\msedge.exe"
+    ) do (
+        if exist %%~B (
+            start "" %%~B --app=%URL% --new-window
+            exit /b 0
+        )
+    )
+    start "" "%URL%"
     exit /b 0
 )
 
@@ -27,6 +42,12 @@ if defined PYEXE (
     exit /b 0
 )
 
-echo PurahPad.exe not found in "%~dp0".
+echo.
+echo [EN] Python is NOT required! Simply open totk.exe and Purah Pad starts automatically on Monitor 2.
+echo      (Run this .bat while the game is open to reopen the Purah Pad window if you closed it.)
+echo.
+echo [PT-BR] Python NAO e necessario! Basta abrir o totk.exe e o Purah Pad abre sozinho no Monitor 2.
+echo         (Execute este .bat com o jogo aberto caso tenha fechado a janela do Purah Pad.)
+echo.
 pause
-exit /b 1
+exit /b 0

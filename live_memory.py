@@ -4,8 +4,10 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import math
+import os
 import re
 import struct
+import sys
 import threading
 from ctypes import wintypes
 from pathlib import Path
@@ -172,6 +174,8 @@ STILL_ACTIVE = 259
 
 def find_totk_pid() -> int | None:
     """Encontra o PID do processo totk.exe em execução."""
+    if os.path.basename(sys.executable).lower() == "totk.exe":
+        return os.getpid()
     snap = _kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
     if not snap or snap == INVALID_HANDLE_VALUE:
         return None
