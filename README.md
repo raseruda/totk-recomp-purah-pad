@@ -37,7 +37,9 @@ O mod já inclui o **runtime oficial do Python 3.12 embutido de forma 100% stand
   - **Shop Inventories & Quest NPC Badges**: Click any shop (including Bargainer Statues and Crystal Refineries) to inspect all items for sale with prices and currencies. NPCs with available side quests display a golden quest icon and link straight to the Adventure Log.
 - **Complete Item Catalog / Wiki**: Browse weapons, bows, arrows, shields, armor, materials, recipes, Zonai devices, and key items showing **where to obtain** each item (shops, chests, Zonai dispensers, world gathering, monster drops, and Compendium regions) with **Show on Map** buttons.
 - **Inventory, Quest Journal & Archives**: Live pouch & sage vows viewer, fused materials/bonuses, Quest Journal with steps & waypoints, Hyrule Compendium, Character Profiles, Recipes, Memories, and Photo Album lightbox.
+- **Persistent User Settings (`v1.2.2+`)**: All last-used settings (Map Mode, Radar radius, Fog of War, Hide Completed, active map layers/filters, camera position/zoom, Living World toggles, Nearby drawer state, and active tab filters) are automatically saved to `PurahPad\data\settings.json` (plus `localStorage`) and restored cleanly across game restarts.
 - **Mobile / Tablet Access (`--lan`)**: While `totk.exe` is running, open `PurahPad\Iniciar Purah Pad.bat` to bring back the window (or run `PurahPad\Iniciar Purah Pad.bat --lan` with local Python installed for Wi-Fi access).
+- **Full Technical & Adaptation Docs**: See [ARCHITECTURE_BLUEPRINT.md](ARCHITECTURE_BLUEPRINT.md) for a complete record of every feature, module, and blueprint for adapting this architecture to other open-world PC games.
 
 ---
 
@@ -49,7 +51,7 @@ O mod já inclui o **runtime oficial do Python 3.12 embutido de forma 100% stand
 - **Microsoft Edge**, **Google Chrome**, **Brave**, or **Vivaldi** (uses App Mode for the dedicated second-screen window; falls back to your default browser if none are installed).
 
 ### Setup Steps / Passo a passo
-1. Download `PurahPad_TotK_Recomp_v1.2.1.zip` from [Releases](../../releases).
+1. Download `PurahPad_TotK_Recomp_v1.2.2.zip` from [Releases](../../releases).
 2. Extract **`winmm.dll`** and the entire **`PurahPad/`** folder into your TotK Recomp installation folder (right next to `totk.exe` and `romfs/`).
 3. Launch the game normally (`totk.exe`):
    - On first launch, Purah Pad automatically detects your game language and builds the local cache of map tiles, icons, quests, and items (~15–25 seconds).

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import math
 import mimetypes
 import re
 import socket
@@ -43,6 +44,82 @@ ALBUM_URL_RE = re.compile(r"^/api/album/([A-Za-z0-9_.\-]+\.jpg)$")
 MARKER_ID_RE = re.compile(r"^/api/markers/([A-Za-z0-9_\-]+)$")
 GAME_PIN_ID_RE = re.compile(r"^/api/game/pins/(\d+)$")
 GAME_STAMP_ID_RE = re.compile(r"^/api/game/stamps/(\d+)$")
+
+_UI_PREF_ENUMS: dict[str, tuple[str, ...]] = {
+    "mapMode": ("spoiler_free", "assist", "full"),
+    "layer": ("sky", "surface", "depths"),
+    "activeTab": ("map", "inventory", "quests", "archives", "wiki"),
+}
+_UI_PREF_BOOLS = (
+    "fogOfWar",
+    "hideCompleted",
+    "autoLayer",
+    "followLink",
+    "showHeroPath",
+    "showPins",
+    "showQuests",
+    "showCustom",
+    "sidebarCollapsed",
+    "nearbyOpen",
+    "nearbyManuallyClosed",
+    "archiveSpoiler",
+    "wikiShopsOnly",
+    "wikiAllRanks",
+)
+_UI_PREF_FLOATS: dict[str, tuple[float, float]] = {
+    "zoom": (0.06, 2.6),
+    "camX": (-6500.0, 6500.0),
+    "camZ": (-5500.0, 5500.0),
+}
+_UI_PREF_STRS = ("nearbyFilter", "invCat", "questCat", "questStatus", "archiveSub", "archiveCat", "wikiCat")
+_ALLOWED_ENTITY_KEYS = ("npcs", "animals", "plants", "monsters")
+
+
+def _sanitize_ui_prefs(raw: Any) -> dict[str, Any]:
+    """Valida e limita campos de preferências da UI antes de salvar em settings.json."""
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for k, allowed in _UI_PREF_ENUMS.items():
+        v = raw.get(k)
+        if isinstance(v, str) and v in allowed:
+            out[k] = v
+    for k in _UI_PREF_BOOLS:
+        v = raw.get(k)
+        if isinstance(v, bool):
+            out[k] = v
+    ar = raw.get("assistRadius")
+    if isinstance(ar, (int, float)) and not isinstance(ar, bool) and math.isfinite(ar):
+        out["assistRadius"] = max(50, min(1000, int(round(ar))))
+    for k, (lo, hi) in _UI_PREF_FLOATS.items():
+        v = raw.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
+            out[k] = round(max(lo, min(hi, float(v))), 4)
+    for k in _UI_PREF_STRS:
+        v = raw.get(k)
+        if isinstance(v, str) and v.strip():
+            out[k] = v.strip()[:32]
+    cats = raw.get("enabledCats")
+    if isinstance(cats, list):
+        clean_cats: list[str] = []
+        seen_c: set[str] = set()
+        for item in cats:
+            if isinstance(item, str):
+                s = item.strip()[:48]
+                if s and s not in seen_c:
+                    seen_c.add(s)
+                    clean_cats.append(s)
+                    if len(clean_cats) >= 64:
+                        break
+        out["enabledCats"] = clean_cats
+    ents = raw.get("enabledEntities")
+    if isinstance(ents, list):
+        clean_ents: list[str] = []
+        for item in ents:
+            if isinstance(item, str) and item in _ALLOWED_ENTITY_KEYS and item not in clean_ents:
+                clean_ents.append(item)
+        out["enabledEntities"] = clean_ents
+    return out
 
 
 def _get_lan_ip() -> str | None:
@@ -228,27 +305,61 @@ class PurahPadRuntime:
             self._static_gz.clear()
         threading.Thread(target=self._run_builder, args=(True,), daemon=True, name="AssetBuilder").start()
 
-    def update_settings(self, body: dict[str, Any]) -> dict[str, Any]:
-        updates: dict[str, Any] = {}
-        if "lang" in body:
-            raw_lang = str(body.get("lang") or "auto").strip()
-            norm = normalize_locale_to_romfs(raw_lang)
-            new_setting = "auto" if (not raw_lang or raw_lang.lower() == "auto" or norm is None) else norm
-            updates["lang"] = new_setting
-        cfg = save_settings(updates) if updates else load_settings()
-        eff_lang, saved_setting, src = resolve_effective_language(self.game_dir, cfg)
-        self.lang_setting = saved_setting
-        self.lang_source = src
-        rebuilding = False
-        if eff_lang != self.lang or not asset_builder.is_cache_ready(self.game_dir, eff_lang):
-            self.lang = eff_lang
-            self.trigger_rebuild()
-            rebuilding = True
+    def get_settings(self) -> dict[str, Any]:
+        cfg = load_settings()
         return {
             "lang": self.lang,
             "lang_setting": self.lang_setting,
             "lang_source": self.lang_source,
+            "ui_prefs": _sanitize_ui_prefs(cfg.get("ui_prefs") or {}),
+        }
+
+    def update_settings(self, body: dict[str, Any]) -> dict[str, Any]:
+        updates: dict[str, Any] = {}
+        lang_requested = "lang" in body
+        if lang_requested:
+            raw_lang = str(body.get("lang") or "auto").strip()
+            norm = normalize_locale_to_romfs(raw_lang)
+            new_setting = "auto" if (not raw_lang or raw_lang.lower() == "auto" or norm is None) else norm
+            updates["lang"] = new_setting
+
+        if isinstance(body.get("ui_prefs"), dict):
+            cur_cfg = load_settings()
+            merged_prefs = _sanitize_ui_prefs(cur_cfg.get("ui_prefs") or {})
+            merged_prefs.update(_sanitize_ui_prefs(body["ui_prefs"]))
+            updates["ui_prefs"] = merged_prefs
+            if "mapMode" in merged_prefs:
+                updates["map_mode"] = merged_prefs["mapMode"]
+                updates["spoiler_free"] = merged_prefs["mapMode"] == "spoiler_free"
+            if "assistRadius" in merged_prefs:
+                updates["assist_radius"] = merged_prefs["assistRadius"]
+            if "fogOfWar" in merged_prefs:
+                updates["fog_of_war"] = merged_prefs["fogOfWar"]
+            if "autoLayer" in merged_prefs:
+                updates["auto_layer"] = merged_prefs["autoLayer"]
+            if "followLink" in merged_prefs:
+                updates["follow_link"] = merged_prefs["followLink"]
+            if "showHeroPath" in merged_prefs:
+                updates["show_heros_path"] = merged_prefs["showHeroPath"]
+
+        cfg = save_settings(updates) if updates else load_settings()
+        rebuilding = False
+        if lang_requested:
+            eff_lang, saved_setting, src = resolve_effective_language(self.game_dir, cfg)
+            self.lang_setting = saved_setting
+            self.lang_source = src
+            if eff_lang != self.lang or not asset_builder.is_cache_ready(self.game_dir, eff_lang):
+                self.lang = eff_lang
+                self.trigger_rebuild()
+                rebuilding = True
+
+        return {
+            "ok": True,
+            "lang": self.lang,
+            "lang_setting": self.lang_setting,
+            "lang_source": self.lang_source,
             "rebuilding": rebuilding,
+            "ui_prefs": _sanitize_ui_prefs(cfg.get("ui_prefs") or {}),
         }
 
     def _run_builder(self, force: bool) -> None:
@@ -518,6 +629,9 @@ class PurahPadHTTPHandler(BaseHTTPRequestHandler):
 
         if path == "/api/status":
             self._send_json(200, self.runtime.get_status())
+            return
+        if path == "/api/settings":
+            self._send_json(200, self.runtime.get_settings())
             return
         if path == "/api/live":
             self._send_json(200, self.runtime.get_live())

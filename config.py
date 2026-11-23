@@ -7,8 +7,11 @@ import locale
 import os
 import re
 import sys
+import threading
 from pathlib import Path
 from typing import Any
+
+_SETTINGS_LOCK = threading.RLock()
 
 ROOT_DIR = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 DEFAULT_GAME_DIR = Path(r"C:\Games\The Legend of Zelda - Tears of the Kingdom")
@@ -60,6 +63,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "auto_layer": True,
     "follow_link": True,
     "show_heros_path": True,
+    "ui_prefs": {},
 }
 
 
@@ -222,26 +226,31 @@ def ensure_dirs() -> None:
 
 def load_settings() -> dict[str, Any]:
     """Lê data/settings.json mesclado com os valores padrão."""
-    ensure_dirs()
-    cfg = dict(DEFAULT_SETTINGS)
-    if SETTINGS_PATH.is_file():
-        try:
-            loaded = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
-                cfg.update(loaded)
-        except (OSError, json.JSONDecodeError):
-            pass
-    return cfg
+    with _SETTINGS_LOCK:
+        ensure_dirs()
+        cfg = dict(DEFAULT_SETTINGS)
+        cfg["ui_prefs"] = {}
+        if SETTINGS_PATH.is_file():
+            try:
+                loaded = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    cfg.update(loaded)
+                    if not isinstance(cfg.get("ui_prefs"), dict):
+                        cfg["ui_prefs"] = {}
+            except (OSError, json.JSONDecodeError):
+                pass
+        return cfg
 
 
 def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
     """Atualiza e persiste data/settings.json de forma atômica."""
-    cfg = load_settings()
-    cfg.update(updates)
-    tmp = SETTINGS_PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(SETTINGS_PATH)
-    return cfg
+    with _SETTINGS_LOCK:
+        cfg = load_settings()
+        cfg.update(updates)
+        tmp = SETTINGS_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(SETTINGS_PATH)
+        return cfg
 
 
 def _looks_like_game_dir(p: Path) -> bool:

@@ -17,9 +17,14 @@
   ];
   const STAMP_KEYS = ["Sword", "Pot", "Human", "Rhombus", "Heart", "Star", "TreasureBox", "Skull", "Leaf", "Ore"];
 
-  const MAP_PREFS_KEY = "purahpad_map_prefs_v1";
+  const PREFS_KEY = "purahpad_prefs_v2";
+  const LEGACY_PREFS_KEY = "purahpad_map_prefs_v1";
 
   const WIKI_CATS = ["all", "Weapon", "Bow", "Shield", "Armor", "Material", "Food", "SpecialParts", "KeyItem"];
+  const ARCHIVE_SUBS = ["compendium", "profiles", "recipes", "memories", "album"];
+  const ARCHIVE_CATS = ["all", "Animal", "Enemy", "Material", "Weapon", "Treasure"];
+  const VALID_TABS = ["map", "inventory", "quests", "archives", "wiki"];
+  const VALID_ENTITY_KEYS = ["npcs", "animals", "plants", "monsters"];
 
   function formatShopPrice(g) {
     if (!g) return "";
@@ -33,6 +38,8 @@
     i18nApplied: false,
     streamStarted: false,
     pollTimersStarted: false,
+    serverPrefsLoaded: false,
+    bootComplete: false,
     status: null,
     live: null,
     snapshot: null,
@@ -56,6 +63,7 @@
     assistRadius: 200,
     fogOfWar: true,
     hideCompleted: false,
+    sidebarCollapsed: false,
     nearbyOpen: false,
     nearbyManuallyClosed: false,
     nearbyFilter: "all",
@@ -70,51 +78,9 @@
     staticLoaded: false,
   };
 
-  function saveMapPrefs() {
-    try {
-      localStorage.setItem(
-        MAP_PREFS_KEY,
-        JSON.stringify({
-          mapMode: state.mapMode,
-          assistRadius: state.assistRadius,
-          fogOfWar: state.fogOfWar,
-          hideCompleted: state.hideCompleted,
-          nearbyOpen: state.nearbyOpen,
-          nearbyManuallyClosed: state.nearbyManuallyClosed,
-        })
-      );
-    } catch (_) {}
-  }
-
-  function loadMapPrefs() {
-    try {
-      const raw = localStorage.getItem(MAP_PREFS_KEY);
-      if (!raw) return;
-      const p = JSON.parse(raw);
-      if (p.mapMode && ["spoiler_free", "assist", "full"].includes(p.mapMode)) {
-        state.mapMode = p.mapMode;
-        state.spoilerFree = p.mapMode === "spoiler_free";
-      }
-      if (typeof p.assistRadius === "number" && p.assistRadius >= 50 && p.assistRadius <= 1000) {
-        state.assistRadius = p.assistRadius;
-      }
-      if (typeof p.fogOfWar === "boolean") {
-        state.fogOfWar = p.fogOfWar;
-      }
-      if (typeof p.hideCompleted === "boolean") {
-        state.hideCompleted = p.hideCompleted;
-      }
-      if (typeof p.nearbyManuallyClosed === "boolean") {
-        state.nearbyManuallyClosed = p.nearbyManuallyClosed;
-      }
-      if (typeof p.nearbyOpen === "boolean") {
-        state.nearbyOpen = p.nearbyOpen;
-      } else if (state.mapMode === "assist" && !state.nearbyManuallyClosed) {
-        state.nearbyOpen = true;
-      }
-    } catch (_) {}
-  }
-  loadMapPrefs();
+  let prefsSaveTimer = null;
+  let prefsDirty = false;
+  let viewSaveTimer = null;
 
   const $ = (id) => document.getElementById(id);
   const esc = (s) =>
@@ -126,6 +92,11 @@
     return res.json();
   }
 
+  function scheduleViewSave() {
+    clearTimeout(viewSaveTimer);
+    viewSaveTimer = setTimeout(() => saveAllPrefs(false), 350);
+  }
+
   // ---------------- Mapa ----------------
   const mapCtrl = new window.PurahMap.MapController($("map-canvas"), {
     onCursorMove: (x, z) => {
@@ -134,16 +105,113 @@
     onLayerChange: (layer) => syncLayerButtons(layer),
     onStopFollow: () => {
       $("chk-follow").checked = false;
+      saveAllPrefs(false);
     },
+    onViewChange: () => scheduleViewSave(),
     onSelect: (item) => renderMapDetail(item),
     onContextMarker: (x, z, layer) => openMarkerEditor({ x, z, layer }),
   });
 
-  mapCtrl.mapMode = state.mapMode;
-  mapCtrl.spoilerFree = state.spoilerFree;
-  mapCtrl.assistRadius = state.assistRadius;
-  mapCtrl.fogOfWar = state.fogOfWar;
-  mapCtrl.hideCompleted = state.hideCompleted;
+  function collectAllPrefs() {
+    return {
+      mapMode: state.mapMode,
+      assistRadius: state.assistRadius,
+      fogOfWar: state.fogOfWar,
+      hideCompleted: state.hideCompleted,
+      layer: mapCtrl.layer,
+      autoLayer: mapCtrl.autoLayer,
+      followLink: mapCtrl.followLink,
+      showHeroPath: mapCtrl.showHeroPath,
+      showPins: mapCtrl.showPins,
+      showQuests: mapCtrl.showQuests,
+      showCustom: mapCtrl.showCustom,
+      zoom: Number(mapCtrl.zoom.toFixed(4)),
+      camX: Math.round(mapCtrl.camX * 100) / 100,
+      camZ: Math.round(mapCtrl.camZ * 100) / 100,
+      enabledCats: Array.from(mapCtrl.enabledCats),
+      enabledEntities: Array.from(mapCtrl.enabledEntities),
+      sidebarCollapsed: state.sidebarCollapsed,
+      nearbyOpen: state.nearbyOpen,
+      nearbyManuallyClosed: state.nearbyManuallyClosed,
+      nearbyFilter: state.nearbyFilter,
+      activeTab: state.activeTab,
+      invCat: state.invCat,
+      questCat: state.questCat,
+      questStatus: state.questStatus,
+      archiveSub: state.archiveSub,
+      archiveCat: state.archiveCat,
+      archiveSpoiler: state.archiveSpoiler,
+      wikiCat: state.wikiCat,
+      wikiShopsOnly: state.wikiShopsOnly,
+      wikiAllRanks: state.wikiAllRanks,
+    };
+  }
+
+  function applyAllPrefs(p) {
+    if (!p || typeof p !== "object") return false;
+    if (p.mapMode && ["spoiler_free", "assist", "full"].includes(p.mapMode)) {
+      state.mapMode = p.mapMode;
+      state.spoilerFree = p.mapMode === "spoiler_free";
+      mapCtrl.mapMode = state.mapMode;
+      mapCtrl.spoilerFree = state.spoilerFree;
+    }
+    if (typeof p.assistRadius === "number" && Number.isFinite(p.assistRadius) && p.assistRadius >= 50 && p.assistRadius <= 1000) {
+      state.assistRadius = Math.round(p.assistRadius);
+      mapCtrl.assistRadius = state.assistRadius;
+    }
+    if (typeof p.fogOfWar === "boolean") {
+      state.fogOfWar = p.fogOfWar;
+      mapCtrl.fogOfWar = p.fogOfWar;
+    }
+    if (typeof p.hideCompleted === "boolean") {
+      state.hideCompleted = p.hideCompleted;
+      mapCtrl.hideCompleted = p.hideCompleted;
+    }
+    if (p.layer && ["sky", "surface", "depths"].includes(p.layer)) mapCtrl.layer = p.layer;
+    if (typeof p.autoLayer === "boolean") mapCtrl.autoLayer = p.autoLayer;
+    if (typeof p.followLink === "boolean") mapCtrl.followLink = p.followLink;
+    if (typeof p.showHeroPath === "boolean") mapCtrl.showHeroPath = p.showHeroPath;
+    if (typeof p.showPins === "boolean") mapCtrl.showPins = p.showPins;
+    if (typeof p.showQuests === "boolean") mapCtrl.showQuests = p.showQuests;
+    if (typeof p.showCustom === "boolean") mapCtrl.showCustom = p.showCustom;
+    if (typeof p.zoom === "number" && Number.isFinite(p.zoom)) {
+      mapCtrl.zoom = Math.max(mapCtrl.minZoom, Math.min(mapCtrl.maxZoom, p.zoom));
+    }
+    if (typeof p.camX === "number" && Number.isFinite(p.camX)) {
+      mapCtrl.camX = Math.max(-6500, Math.min(6500, p.camX));
+    }
+    if (typeof p.camZ === "number" && Number.isFinite(p.camZ)) {
+      mapCtrl.camZ = Math.max(-5500, Math.min(5500, p.camZ));
+    }
+    if (Array.isArray(p.enabledCats)) {
+      mapCtrl.enabledCats = new Set(p.enabledCats.filter((x) => typeof x === "string" && x));
+    }
+    if (Array.isArray(p.enabledEntities)) {
+      mapCtrl.enabledEntities = new Set(p.enabledEntities.filter((x) => VALID_ENTITY_KEYS.includes(x)));
+    }
+    if (typeof p.sidebarCollapsed === "boolean") state.sidebarCollapsed = p.sidebarCollapsed;
+    if (typeof p.nearbyManuallyClosed === "boolean") state.nearbyManuallyClosed = p.nearbyManuallyClosed;
+    if (typeof p.nearbyOpen === "boolean") {
+      state.nearbyOpen = p.nearbyOpen;
+    } else if (state.mapMode === "assist" && !state.nearbyManuallyClosed) {
+      state.nearbyOpen = true;
+    }
+    if (p.nearbyFilter && ["all", "poi", "npcs", "enemies", "resources"].includes(p.nearbyFilter)) {
+      state.nearbyFilter = p.nearbyFilter;
+    }
+    if (p.activeTab && VALID_TABS.includes(p.activeTab)) state.activeTab = p.activeTab;
+    if (p.invCat && INV_CATS.includes(p.invCat)) state.invCat = p.invCat;
+    if (p.questCat && QUEST_CATS.includes(p.questCat)) state.questCat = p.questCat;
+    if (p.questStatus && QUEST_STATUSES.includes(p.questStatus)) state.questStatus = p.questStatus;
+    if (p.archiveSub && ARCHIVE_SUBS.includes(p.archiveSub)) state.archiveSub = p.archiveSub;
+    if (p.archiveCat && ARCHIVE_CATS.includes(p.archiveCat)) state.archiveCat = p.archiveCat;
+    if (typeof p.archiveSpoiler === "boolean") state.archiveSpoiler = p.archiveSpoiler;
+    if (p.wikiCat && WIKI_CATS.includes(p.wikiCat)) state.wikiCat = p.wikiCat;
+    if (typeof p.wikiShopsOnly === "boolean") state.wikiShopsOnly = p.wikiShopsOnly;
+    if (typeof p.wikiAllRanks === "boolean") state.wikiAllRanks = p.wikiAllRanks;
+    mapCtrl.dirty = true;
+    return true;
+  }
 
   function applyModeUI() {
     document.querySelectorAll("#map-mode-seg .mode-btn").forEach((b) => {
@@ -165,6 +233,113 @@
     if (btnNearby) btnNearby.classList.toggle("active", Boolean(state.nearbyOpen));
     const drawerNearby = $("map-nearby");
     if (drawerNearby) drawerNearby.classList.toggle("hidden", !state.nearbyOpen);
+  }
+
+  function syncAllControlUI() {
+    applyModeUI();
+    const chkAuto = $("chk-autolayer");
+    if (chkAuto) chkAuto.checked = Boolean(mapCtrl.autoLayer);
+    const chkFollow = $("chk-follow");
+    if (chkFollow) chkFollow.checked = Boolean(mapCtrl.followLink);
+    const chkHero = $("chk-heropath");
+    if (chkHero) chkHero.checked = Boolean(mapCtrl.showHeroPath);
+    const chkPins = $("chk-pins");
+    if (chkPins) chkPins.checked = Boolean(mapCtrl.showPins);
+    const chkQuests = $("chk-quests-map");
+    if (chkQuests) chkQuests.checked = Boolean(mapCtrl.showQuests);
+    const chkCustom = $("chk-custom-map");
+    if (chkCustom) chkCustom.checked = Boolean(mapCtrl.showCustom);
+    const sb = $("map-sidebar");
+    if (sb) sb.classList.toggle("collapsed", Boolean(state.sidebarCollapsed));
+    const chkArchSp = $("chk-archive-spoiler");
+    if (chkArchSp) chkArchSp.checked = Boolean(state.archiveSpoiler);
+    const chkWikiShops = $("chk-wiki-shops-only");
+    if (chkWikiShops) chkWikiShops.checked = Boolean(state.wikiShopsOnly);
+    const chkWikiRanks = $("chk-wiki-all-ranks");
+    if (chkWikiRanks) chkWikiRanks.checked = Boolean(state.wikiAllRanks);
+    syncLayerButtons(mapCtrl.layer);
+  }
+
+  function readLocalPrefs() {
+    try {
+      const raw = localStorage.getItem(PREFS_KEY) || localStorage.getItem(LEGACY_PREFS_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function writeLocalPrefs(prefs) {
+    try {
+      localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+    } catch (_) {}
+  }
+
+  function flushPrefsToServer() {
+    clearTimeout(prefsSaveTimer);
+    prefsSaveTimer = null;
+    if (!prefsDirty) return;
+    prefsDirty = false;
+    fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ui_prefs: collectAllPrefs() }),
+      keepalive: true,
+    }).catch(() => {});
+  }
+
+  function saveAllPrefs(immediate = false) {
+    writeLocalPrefs(collectAllPrefs());
+    prefsDirty = true;
+    clearTimeout(prefsSaveTimer);
+    if (immediate) {
+      flushPrefsToServer();
+    } else {
+      prefsSaveTimer = setTimeout(flushPrefsToServer, 300);
+    }
+  }
+
+  function flushPrefsBeacon() {
+    clearTimeout(viewSaveTimer);
+    clearTimeout(prefsSaveTimer);
+    if (!prefsDirty) return;
+    prefsDirty = false;
+    const body = JSON.stringify({ ui_prefs: collectAllPrefs() });
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon("/api/settings", new Blob([body], { type: "application/json" }));
+    } else {
+      fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
+    }
+  }
+
+  async function loadServerPrefs() {
+    try {
+      const res = await apiJson("/api/settings");
+      state.serverPrefsLoaded = true;
+      const serverPrefs = res && res.ui_prefs;
+      if (serverPrefs && Object.keys(serverPrefs).length > 0) {
+        applyAllPrefs(serverPrefs);
+        writeLocalPrefs(collectAllPrefs());
+        syncAllControlUI();
+        if (state.staticLoaded && mapCtrl.enabledEntities.size > 0) {
+          ensureEntitiesLoaded().catch(() => {});
+        }
+      } else {
+        const localPrefs = readLocalPrefs();
+        if (localPrefs && Object.keys(localPrefs).length > 0) {
+          saveAllPrefs(true);
+        }
+      }
+    } catch (_) {
+      state.serverPrefsLoaded = true;
+    }
+  }
+
+  const initialLocalPrefs = readLocalPrefs();
+  if (initialLocalPrefs) {
+    applyAllPrefs(initialLocalPrefs);
   }
 
   async function ensureEntitiesLoaded() {
@@ -257,6 +432,7 @@
         if (mapCtrl.enabledCats.has(meta.key)) mapCtrl.enabledCats.delete(meta.key);
         else mapCtrl.enabledCats.add(meta.key);
         mapCtrl.dirty = true;
+        saveAllPrefs();
         renderCategoryList();
       });
       container.appendChild(el);
@@ -305,15 +481,18 @@
         if (mapCtrl.enabledEntities.has(meta.key)) {
           mapCtrl.enabledEntities.delete(meta.key);
           mapCtrl.dirty = true;
+          saveAllPrefs();
           renderCategoryList();
         } else {
           mapCtrl.enabledEntities.add(meta.key);
+          saveAllPrefs();
           renderCategoryList();
           try {
             await ensureEntitiesLoaded();
             mapCtrl.dirty = true;
           } catch (_) {
             mapCtrl.enabledEntities.delete(meta.key);
+            saveAllPrefs();
             renderCategoryList();
           }
         }
@@ -1010,6 +1189,7 @@
       btn.onclick = () => {
         state.invCat = cKey;
         state.invSelected = null;
+        saveAllPrefs();
         renderInventory();
       };
       catsBox.appendChild(btn);
@@ -1105,6 +1285,7 @@
       btn.textContent = tr("quest.cat." + cKey);
       btn.onclick = () => {
         state.questCat = cKey;
+        saveAllPrefs();
         renderQuests();
       };
       catBar.appendChild(btn);
@@ -1118,6 +1299,7 @@
       btn.textContent = tr("quest.st." + sKey);
       btn.onclick = () => {
         state.questStatus = sKey;
+        saveAllPrefs();
         renderQuests();
       };
       stBar.appendChild(btn);
@@ -1238,6 +1420,7 @@
         b.textContent = tr("arch.cat." + k);
         b.onclick = () => {
           state.archiveCat = k;
+          saveAllPrefs();
           renderArchives();
         };
         extra.appendChild(b);
@@ -1627,7 +1810,7 @@
       closeBtn.onclick = () => {
         state.nearbyOpen = false;
         state.nearbyManuallyClosed = true;
-        saveMapPrefs();
+        saveAllPrefs();
         applyModeUI();
       };
     }
@@ -1635,6 +1818,7 @@
     panel.querySelectorAll("[data-nchip]").forEach((btn) => {
       btn.onclick = () => {
         state.nearbyFilter = btn.dataset.nchip;
+        saveAllPrefs();
         renderNearbyPanel();
       };
     });
@@ -1734,6 +1918,7 @@
       btn.textContent = tr("wiki.cat." + cKey);
       btn.onclick = () => {
         state.wikiCat = cKey;
+        saveAllPrefs();
         renderWiki();
       };
       catsBox.appendChild(btn);
@@ -1987,6 +2172,7 @@
     state.activeTab = tab;
     document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
     document.querySelectorAll(".tab-view").forEach((v) => v.classList.toggle("active", v.id === `view-${tab}`));
+    if (state.bootComplete) saveAllPrefs();
     if (tab === "map") mapCtrl._resize();
     else if (tab === "inventory") renderInventory();
     else if (tab === "quests") renderQuests();
@@ -2042,8 +2228,7 @@
     if (changed || !state.i18nApplied) {
       state.i18nApplied = true;
       window.PurahI18n.applyDom();
-      applyModeUI();
-      syncLayerButtons(mapCtrl.layer);
+      syncAllControlUI();
       renderHud(state.live || state.snapshot);
       if (state.staticLoaded) renderCategoryList();
       mapCtrl.dirty = true;
@@ -2057,9 +2242,13 @@
     const b = st.build || {};
     if (b.state === "ready") {
       $("setup-overlay").classList.add("hidden");
+      if (!state.serverPrefsLoaded) {
+        await loadServerPrefs();
+      }
       await loadStaticData();
       await refreshSnapshot();
       switchTab(state.activeTab);
+      state.bootComplete = true;
       try {
         state.footprint = await apiJson("/api/footprint");
         mapCtrl.setData({ footprint: state.footprint });
@@ -2134,6 +2323,7 @@
       mapCtrl.autoLayer = false;
       mapCtrl.setLayer(b.dataset.layer);
       syncLayerButtons(b.dataset.layer);
+      saveAllPrefs();
     });
   });
 
@@ -2150,7 +2340,7 @@
       }
       mapCtrl.dirty = true;
       applyModeUI();
-      saveMapPrefs();
+      saveAllPrefs();
       renderCategoryList();
       if (state.nearbyOpen) renderNearbyPanel();
     });
@@ -2162,7 +2352,7 @@
     mapCtrl.assistRadius = r;
     mapCtrl.dirty = true;
     $("assist-radius-val").textContent = `${r} m`;
-    saveMapPrefs();
+    saveAllPrefs();
     renderCategoryList();
     if (state.nearbyOpen) renderNearbyPanel();
   });
@@ -2171,56 +2361,65 @@
     state.fogOfWar = e.target.checked;
     mapCtrl.fogOfWar = e.target.checked;
     mapCtrl.dirty = true;
-    saveMapPrefs();
+    saveAllPrefs();
   });
 
   $("chk-hide-done").addEventListener("change", (e) => {
     state.hideCompleted = e.target.checked;
     mapCtrl.hideCompleted = e.target.checked;
     mapCtrl.dirty = true;
-    saveMapPrefs();
+    saveAllPrefs();
     renderCategoryList();
     if (state.nearbyOpen) renderNearbyPanel();
   });
 
   $("chk-autolayer").addEventListener("change", (e) => {
     mapCtrl.autoLayer = e.target.checked;
+    saveAllPrefs();
   });
   $("chk-follow").addEventListener("change", (e) => {
     mapCtrl.followLink = e.target.checked;
     if (e.target.checked) mapCtrl.recenterOnLink();
+    saveAllPrefs();
   });
   $("chk-heropath").addEventListener("change", (e) => {
     mapCtrl.showHeroPath = e.target.checked;
     mapCtrl.dirty = true;
+    saveAllPrefs();
   });
   $("chk-pins").addEventListener("change", (e) => {
     mapCtrl.showPins = e.target.checked;
     mapCtrl.dirty = true;
+    saveAllPrefs();
   });
   $("chk-quests-map").addEventListener("change", (e) => {
     mapCtrl.showQuests = e.target.checked;
     mapCtrl.dirty = true;
+    saveAllPrefs();
   });
   $("chk-custom-map").addEventListener("change", (e) => {
     mapCtrl.showCustom = e.target.checked;
     mapCtrl.dirty = true;
+    saveAllPrefs();
   });
 
   $("btn-cat-all").onclick = () => {
     mapCtrl.getCategoryMeta().forEach((c) => mapCtrl.enabledCats.add(c.key));
     mapCtrl.dirty = true;
+    saveAllPrefs();
     renderCategoryList();
   };
   $("btn-cat-none").onclick = () => {
     mapCtrl.enabledCats.clear();
     mapCtrl.enabledEntities.clear();
     mapCtrl.dirty = true;
+    saveAllPrefs();
     renderCategoryList();
   };
 
   $("btn-toggle-sidebar").onclick = () => {
-    $("map-sidebar").classList.toggle("collapsed");
+    state.sidebarCollapsed = $("map-sidebar").classList.toggle("collapsed");
+    saveAllPrefs();
     mapCtrl._resize();
   };
   $("btn-recenter").onclick = () => mapCtrl.recenterOnLink();
@@ -2230,7 +2429,7 @@
   $("btn-nearby").onclick = () => {
     state.nearbyOpen = !state.nearbyOpen;
     state.nearbyManuallyClosed = !state.nearbyOpen;
-    saveMapPrefs();
+    saveAllPrefs();
     applyModeUI();
     if (state.nearbyOpen) {
       ensureEntitiesLoaded().catch(() => {});
@@ -2244,6 +2443,8 @@
       mapCtrl.recenterOnLink();
     }
   });
+  window.addEventListener("pagehide", flushPrefsBeacon);
+  window.addEventListener("beforeunload", flushPrefsBeacon);
 
   $("inv-search").addEventListener("input", renderInventory);
   $("quest-search").addEventListener("input", renderQuests);
@@ -2251,20 +2452,24 @@
   $("wiki-search").addEventListener("input", renderWiki);
   $("chk-wiki-shops-only").addEventListener("change", (e) => {
     state.wikiShopsOnly = e.target.checked;
+    saveAllPrefs();
     renderWiki();
   });
   $("chk-wiki-all-ranks").addEventListener("change", (e) => {
     state.wikiAllRanks = e.target.checked;
+    saveAllPrefs();
     renderWiki();
   });
   $("chk-archive-spoiler").addEventListener("change", (e) => {
     state.archiveSpoiler = e.target.checked;
+    saveAllPrefs();
     renderArchives();
   });
   document.querySelectorAll("#archive-subtabs .pill").forEach((b) => {
     b.addEventListener("click", () => {
       state.archiveSub = b.dataset.sub;
       state.archiveSelected = null;
+      saveAllPrefs();
       renderArchiveDetail(null);
       renderArchives();
     });
@@ -2324,7 +2529,7 @@
   };
   $("btn-close-lightbox").onclick = () => $("photo-lightbox").classList.add("hidden");
 
-  applyModeUI();
+  syncAllControlUI();
   setupMapSearch();
   checkSetupAndBoot();
 })();

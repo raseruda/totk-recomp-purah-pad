@@ -171,9 +171,13 @@ window.PurahMap = (function () {
       });
 
       window.addEventListener("mouseup", (e) => {
-        if (this._dragging && e.button === 0 && !this._moved && e.target === this.canvas) {
-          const rect = this.canvas.getBoundingClientRect();
-          this._handleClick(e.clientX - rect.left, e.clientY - rect.top);
+        if (this._dragging && e.button === 0) {
+          if (!this._moved && e.target === this.canvas) {
+            const rect = this.canvas.getBoundingClientRect();
+            this._handleClick(e.clientX - rect.left, e.clientY - rect.top);
+          } else if (this._moved && this.cb.onViewChange) {
+            this.cb.onViewChange();
+          }
         }
         this._dragging = false;
       });
@@ -234,6 +238,8 @@ window.PurahMap = (function () {
         if (lastTouch && !lastTouch.moved && e.changedTouches.length) {
           const rect = this.canvas.getBoundingClientRect();
           this._handleClick(e.changedTouches[0].clientX - rect.left, e.changedTouches[0].clientY - rect.top);
+        } else if (lastTouch && lastTouch.moved && this.cb.onViewChange) {
+          this.cb.onViewChange();
         }
         lastTouch = null;
       });
@@ -282,6 +288,7 @@ window.PurahMap = (function () {
       this.camX = before.x - (sx - this.w / 2) / this.zoom;
       this.camZ = before.z - (sy - this.h / 2) / this.zoom;
       this.dirty = true;
+      if (this.cb.onViewChange) this.cb.onViewChange();
     }
 
     zoomCenter(factor) {
@@ -314,6 +321,7 @@ window.PurahMap = (function () {
         if (lyr) this.layer = lyr;
         if (this.zoom < 0.25) this.zoom = 0.35;
         this.dirty = true;
+        if (this.cb.onViewChange) this.cb.onViewChange();
       }
     }
 
