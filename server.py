@@ -509,12 +509,20 @@ class PurahPadRuntime:
         with self._state_lock:
             live = dict(self._latest_live)
         lan_ip = _get_lan_ip() if self.lan else None
+        game_version = None
+        if asset_builder.META_PATH.is_file():
+            try:
+                game_version = json.loads(asset_builder.META_PATH.read_text(encoding="utf-8")).get("game_version")
+            except (OSError, json.JSONDecodeError):
+                pass
         return {
             "build": asset_builder.get_build_status(),
             "connection_mode": live.get("mode", "offline"),
             "game_status": live.get("status", "offline"),
             "pid": live.get("pid"),
             "game_dir": str(self.game_dir),
+            "game_version": game_version,
+            "live_layout": self._live_reader.live_layout,
             "lang": self.lang,
             "lang_setting": self.lang_setting,
             "lang_source": self.lang_source,

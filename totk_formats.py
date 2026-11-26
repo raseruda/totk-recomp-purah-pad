@@ -236,21 +236,68 @@ def parse_byml(data: bytes) -> Any:
     return read_node(root_off) if root_off else None
 
 
+def _parse_romfs_index_bin(index_path: Path) -> dict[str, tuple[int, int]]:
+    """Lê o índice binário TOTKRFS1 (`romfs-index.bin`) gerado pelo totk-pc-recomp."""
+    import struct
+
+    data = index_path.read_bytes()
+    if len(data) < 24 or data[:8] != b"TOTKRFS1":
+        raise ValueError(f"Cabeçalho TOTKRFS1 inválido em {index_path}")
+    count, strings_off = struct.unpack_from("<QQ", data, 8)
+    entries_end = 24 + count * 24
+    if entries_end > len(data) or strings_off > len(data):
+        raise ValueError(f"Índice TOTKRFS1 truncado em {index_path}")
+    files: dict[str, tuple[int, int]] = {}
+    for i in range(count):
+        off, size, name_off, name_len = struct.unpack_from("<QQII", data, 24 + i * 24)
+        s_start = strings_off + name_off
+        raw_name = data[s_start : s_start + name_len].rstrip(b"\0")
+        files[raw_name.decode("utf-8")] = (off, size)
+    return files
+
+
 class Romfs:
-    """Leitor thread-safe de romfs/index.json + romfs/romfs.bin com descompressão Zstd/ZsDic."""
+    """Leitor thread-safe de RomFS (index.json / romfs-index.bin + romfs.bin ou pasta extraída)."""
 
     def __init__(self, romfs_dir: Path | str) -> None:
         self.dir = Path(romfs_dir)
-        index_path = self.dir / "index.json"
+        index_json = self.dir / "index.json"
         bin_path = self.dir / "romfs.bin"
-        if not index_path.is_file() or not bin_path.is_file():
+        index_bin_candidates = (self.dir / "romfs-index.bin", self.dir.parent / "romfs-index.bin")
+        index_bin = next((p for p in index_bin_candidates if p.is_file()), None)
+
+        self._loose_files: dict[str, Path] = {}
+        self._fp = None
+        self._bin_path: Path | None = None
+
+        if bin_path.is_file() and (index_json.is_file() or index_bin is not None):
+            if index_json.is_file():
+                with index_json.open("r", encoding="utf-8") as f:
+                    entries = json.load(f)["files"]
+                self.files: dict[str, tuple[int, int]] = {
+                    e["path"]: (e["offset"], e["size"]) for e in entries
+                }
+            else:
+                assert index_bin is not None
+                self.files = _parse_romfs_index_bin(index_bin)
+            self._bin_path = bin_path
+            self._fp = bin_path.open("rb")
+        elif self.dir.is_dir():
+            loose: dict[str, Path] = {}
+            files: dict[str, tuple[int, int]] = {}
+            for p in self.dir.rglob("*"):
+                if p.is_file():
+                    rel = p.relative_to(self.dir).as_posix()
+                    loose[rel] = p
+                    files[rel] = (0, p.stat().st_size)
+            if not loose:
+                raise FileNotFoundError(f"RomFS inválido em {self.dir}")
+            self._loose_files = loose
+            self.files = files
+        else:
             raise FileNotFoundError(f"RomFS inválido em {self.dir}")
-        with index_path.open("r", encoding="utf-8") as f:
-            entries = json.load(f)["files"]
-        self.files: dict[str, tuple[int, int]] = {e["path"]: (e["offset"], e["size"]) for e in entries}
+
         self._paths: list[str] = list(self.files.keys())
-        self._bin_path = bin_path
-        self._fp = bin_path.open("rb")
         self._io_lock = threading.Lock()
         self._local = threading.local()
         self._dicts: list[bytes] = []
@@ -280,6 +327,8 @@ class Romfs:
         return [p for p in self._paths if p.startswith(prefix) and p.endswith(suffix)]
 
     def read_raw(self, path: str) -> bytes:
+        if self._fp is None:
+            return self._loose_files[path].read_bytes()
         off, size = self.files[path]
         with self._io_lock:
             self._fp.seek(off)
@@ -298,7 +347,7 @@ class Romfs:
 
     def close(self) -> None:
         with self._io_lock:
-            if not self._fp.closed:
+            if self._fp is not None and not self._fp.closed:
                 self._fp.close()
 
 

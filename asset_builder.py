@@ -319,12 +319,51 @@ def _write_json_atomic(path: Path, data: Any) -> None:
     tmp.replace(path)
 
 
-def is_cache_ready(game_dir: Path, lang: str) -> bool:
+def _product_version_key(path: str, prefix: str, suffix: str) -> tuple[int, str]:
+    mid = path[len(prefix) : len(path) - len(suffix)] if path.startswith(prefix) and path.endswith(suffix) else ""
+    digits = "".join(ch for ch in mid.split(".", 1)[0] if ch.isdigit())
+    return (int(digits) if digits else -1, path)
+
+
+def _pick_latest_product(romfs: Romfs, prefix: str, suffix: str) -> str | None:
+    """Escolhe o arquivo RomFS com o maior número de versão `Product.<N>` (100, 110, 121, 143...)."""
+    candidates = romfs.find(prefix, suffix)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: _product_version_key(p, prefix, suffix))
+
+
+def detect_romfs_version(romfs: Romfs) -> str:
+    """Infere a versão do jogo (ex.: '1.2.1', '1.4.3') a partir dos arquivos `Product.<N>` do RomFS."""
+    probes = (
+        ("GameData/GameDataList.Product.", ".byml.zs"),
+        ("RSDB/PouchActorInfo.Product.", ".rstbl.byml.zs"),
+        ("RSDB/Challenge.Product.", ".rstbl.byml.zs"),
+        ("RSDB/Location.Product.", ".byml.zs"),
+    )
+    best_num = -1
+    for prefix, suffix in probes:
+        picked = _pick_latest_product(romfs, prefix, suffix)
+        if picked:
+            num, _ = _product_version_key(picked, prefix, suffix)
+            if num > best_num:
+                best_num = num
+    if best_num >= 100:
+        s = str(best_num)
+        if len(s) == 3:
+            return f"{s[0]}.{s[1]}.{s[2]}"
+        return s
+    return "unknown"
+
+
+def is_cache_ready(game_dir: Path, lang: str, game_version: str | None = None) -> bool:
     if not META_PATH.is_file():
         return False
     try:
         meta = json.loads(META_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        return False
+    if game_version is not None and meta.get("game_version") != game_version:
         return False
     return (
         meta.get("cache_version") == CACHE_VERSION
@@ -622,11 +661,11 @@ def _build_map_icons(romfs: Romfs, force: bool = False) -> None:
     _set_status(step="icons", progress=0, total=len(MAP_ICON_RECIPES), message="Extraindo ícones do mapa...")
     out_dir = ICONS_CACHE_DIR / "map"
     out_dir.mkdir(parents=True, exist_ok=True)
-    common_paths = romfs.find("UI/LayoutArchive/Common.", ".blarc.zs")
+    common_path = _pick_latest_product(romfs, "UI/LayoutArchive/Common.", ".blarc.zs")
     ui_data: bytes | None = None
     ui_index: dict[str, int] = {}
-    if common_paths:
-        ui_data = parse_sarc(romfs.read(common_paths[0])).get("timg/__Combined.bntx")
+    if common_path:
+        ui_data = parse_sarc(romfs.read(common_path)).get("timg/__Combined.bntx")
         if ui_data:
             ui_index = dict(list_bntx_textures(ui_data))
 
@@ -1141,8 +1180,8 @@ def _build_map_data(
                 {"id": q["id"], "pts": (q.get("start") or {}).get("points") or []}
             )
 
-    loc_rsdb_paths = romfs.find("RSDB/Location.Product.", ".byml.zs")
-    loc_rsdb_rows = parse_byml(romfs.read(loc_rsdb_paths[-1])) or [] if loc_rsdb_paths else []
+    loc_rsdb_path = _pick_latest_product(romfs, "RSDB/Location.Product.", ".byml.zs")
+    loc_rsdb_rows = parse_byml(romfs.read(loc_rsdb_path)) or [] if loc_rsdb_path else []
     loc_rsdb_map: dict[str, dict[str, Any]] = {}
     dep_hash_to_base: dict[int, str] = {}
     for row in loc_rsdb_rows:
@@ -1940,7 +1979,8 @@ def _extract_points(dest: Any) -> list[list[float]]:
 
 def _build_quests_data(romfs: Romfs, mals: dict[str, bytes], gd: dict[str, Any]) -> dict[str, Any]:
     _set_status(step="quests", progress=0, total=100, message="Extraindo diário de aventuras e missões (PT-BR)...")
-    rows = parse_byml(romfs.read("RSDB/Challenge.Product.143.rstbl.byml.zs")) or []
+    challenge_path = _pick_latest_product(romfs, "RSDB/Challenge.Product.", ".rstbl.byml.zs")
+    rows = (parse_byml(romfs.read(challenge_path)) or []) if challenge_path else []
 
     def msgs(name: str) -> dict[str, str]:
         f = f"{name}.msbt"
@@ -2408,15 +2448,23 @@ def build_all(game_dir: Path, lang: str = "auto", force: bool = False) -> None:
         _build_map_icons(romfs, force=force)
         _build_open_masks(romfs, force=force)
 
-        mals_candidates = romfs.find(f"Mals/{lang}.Product.", ".sarc.zs")
-        if not mals_candidates:
-            mals_candidates = romfs.find("Mals/USen.Product.", ".sarc.zs")
-        mals = parse_sarc(romfs.read(mals_candidates[-1]))
+        game_version = detect_romfs_version(romfs)
+        mals_path = (
+            _pick_latest_product(romfs, f"Mals/{lang}.Product.", ".sarc.zs")
+            or _pick_latest_product(romfs, "Mals/USen.Product.", ".sarc.zs")
+            or _pick_latest_product(romfs, "Mals/", ".sarc.zs")
+        )
+        if not mals_path:
+            raise FileNotFoundError(f"Arquivo Mals/*.sarc.zs não encontrado para idioma {lang!r}")
+        mals = parse_sarc(romfs.read(mals_path))
 
         _set_status(step="gamedata", progress=0, total=100, message="Lendo tabelas do jogo (GameDataList)...")
-        gd_path = romfs.find("GameData/GameDataList.Product.", ".byml.zs")[-1]
+        gd_path = _pick_latest_product(romfs, "GameData/GameDataList.Product.", ".byml.zs")
+        if not gd_path:
+            raise FileNotFoundError("GameData/GameDataList.Product.*.byml.zs não encontrado no RomFS")
         gd = parse_byml(romfs.read(gd_path))["Data"]
-        pouch_rows = parse_byml(romfs.read("RSDB/PouchActorInfo.Product.143.rstbl.byml.zs")) or []
+        pouch_path = _pick_latest_product(romfs, "RSDB/PouchActorInfo.Product.", ".rstbl.byml.zs")
+        pouch_rows = (parse_byml(romfs.read(pouch_path)) or []) if pouch_path else []
 
         quests_data = _build_quests_data(romfs, mals, gd)
         map_data, entities, chest_drops = _build_map_data(romfs, mals, gd, pouch_rows, quests_data=quests_data, lang=lang)
@@ -2424,6 +2472,7 @@ def build_all(game_dir: Path, lang: str = "auto", force: bool = False) -> None:
 
         meta = {
             "cache_version": CACHE_VERSION,
+            "game_version": game_version,
             "game_dir": str(game_dir),
             "lang": lang,
             "built_at": int(time.time()),

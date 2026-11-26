@@ -1,4 +1,4 @@
-"""Leitor somente-leitura da memória do processo totk.exe (TotK Recomp v1.4.3) via Win32 ReadProcessMemory."""
+"""Leitor somente-leitura da memória do processo totk.exe (multi-versão v1.0.0–v1.4.3) via Win32 ReadProcessMemory."""
 from __future__ import annotations
 
 import ctypes
@@ -9,6 +9,7 @@ import re
 import struct
 import sys
 import threading
+import time
 from ctypes import wintypes
 from pathlib import Path
 from typing import Any
@@ -47,10 +48,18 @@ POUCH_SLOT = 0x3A81678
 POUCH_PART = 0x188
 POUCH_MENU = 0x1FCC0
 SCENE_SLOT = 0x3ADD238
+SCENE_SLOT_HINTS = (0x3ADD238, 0x4728538, 0x4725058, 0x4663F08)
 
 GAME_ACTOR_NAME = 0x218
 GAME_ACTOR_POS = 0x2B4
 GAME_ACTOR_ROT = 0x2C0
+ACTOR_LAYOUTS: tuple[tuple[int, int, int], ...] = (
+    (0x218, 0x2B4, 0x2C0),  # v1.1.0 - v1.4.3
+    (0x210, 0x2AC, 0x2B8),  # v1.0.0
+)
+
+MEM_COMMIT = 0x1000
+PAGE_EXECUTE_READWRITE = 0x40
 
 T_BOOL = 0
 T_BOOLARR = 1
@@ -83,7 +92,7 @@ MAX_ARRAY = 4096
 STR_ELEM = 0x50
 NAME_MAX_LEN = 64
 
-_MAIN_LOG_RE = re.compile(r"loaded main\s+at\s+(0x[0-9a-fA-F]+)")
+_MAIN_LOG_RE = re.compile(r"loaded main\s+at\s+(0x[0-9a-fA-F]+)(?:\s+size\s+(0x[0-9a-fA-F]+))?")
 
 
 class PROCESSENTRY32W(ctypes.Structure):
@@ -194,8 +203,10 @@ def find_totk_pid() -> int | None:
         _kernel32.CloseHandle(snap)
 
 
-def detect_main_base(game_dir: Path | None) -> int:
-    """Lê o endereço base do módulo main no logs/totk.log ou usa 0x7000000000."""
+def detect_main_layout(game_dir: Path | None) -> tuple[int, int, int, int]:
+    """Retorna (main_base, bss_start, bss_end, main_size) usando logs/totk.log e exefs/main (NSO0)."""
+    main_base = DEFAULT_MAIN_BASE
+    log_size = 0
     if game_dir:
         log_file = game_dir / "logs" / "totk.log"
         if log_file.is_file():
@@ -206,10 +217,33 @@ def detect_main_base(game_dir: Path | None) -> int:
                             break
                         m = _MAIN_LOG_RE.search(line)
                         if m:
-                            return int(m.group(1), 16)
+                            main_base = int(m.group(1), 16)
+                            if m.group(2):
+                                log_size = int(m.group(2), 16)
+                            break
             except OSError:
                 pass
-    return DEFAULT_MAIN_BASE
+
+        nso_file = game_dir / "exefs" / "main"
+        if nso_file.is_file():
+            try:
+                with nso_file.open("rb") as f:
+                    hdr = f.read(0x40)
+                if len(hdr) >= 0x40 and hdr[:4] == b"NSO0":
+                    data_moff, data_sz, bss_sz = struct.unpack_from("<III", hdr, 0x34)
+                    if bss_sz > 0:
+                        bss_start = (data_moff + data_sz) & ~7
+                        bss_end = data_moff + data_sz + bss_sz
+                        return main_base, bss_start, bss_end, max(log_size, bss_end)
+            except OSError:
+                pass
+
+    return main_base, 0, 0, log_size
+
+
+def detect_main_base(game_dir: Path | None) -> int:
+    """Lê o endereço base do módulo main no logs/totk.log ou usa 0x7000000000."""
+    return detect_main_layout(game_dir)[0]
 
 
 def _pos_ok(p: tuple[float, float, float]) -> bool:
@@ -222,7 +256,7 @@ def _pos_ok(p: tuple[float, float, float]) -> bool:
 
 
 class LiveMemoryReader:
-    """Conexão read-only ao processo totk.exe com verificação do guard v1.4.3."""
+    """Leitor ao vivo universal para totk.exe (fast-path v1.4.3 + scanner dinâmico de .bss)."""
 
     def __init__(self, game_dir: Path | None = None) -> None:
         self.game_dir = game_dir
@@ -230,7 +264,17 @@ class LiveMemoryReader:
         self.handle: int | None = None
         self.can_write: bool = False
         self.main_base: int = DEFAULT_MAIN_BASE
+        self.bss_start: int = 0
+        self.bss_end: int = 0
+        self.main_size: int = 0
+        self.gdm_slot: int | None = None
+        self.pouch_slot: int | None = None
+        self.scene_slot: int | None = None
+        self.actor_offsets: tuple[int, int, int] = (GAME_ACTOR_NAME, GAME_ACTOR_POS, GAME_ACTOR_ROT)
+        self.live_layout: str = "unknown"
         self.guard_ok: int = 0  # 0=não checado, 1=ok, -1=incompatível
+        self._last_gdm_scan_ts: float = 0.0
+        self._last_scene_scan_ts: float = 0.0
         self._lock = threading.RLock()
         self._table_cache: dict[int, tuple[int, int, int, int]] = {}
         self._trail: list[dict[str, Any]] = []
@@ -243,7 +287,17 @@ class LiveMemoryReader:
             self.handle = None
             self.pid = None
             self.can_write = False
+            self.bss_start = 0
+            self.bss_end = 0
+            self.main_size = 0
+            self.gdm_slot = None
+            self.pouch_slot = None
+            self.scene_slot = None
+            self.actor_offsets = (GAME_ACTOR_NAME, GAME_ACTOR_POS, GAME_ACTOR_ROT)
+            self.live_layout = "unknown"
             self.guard_ok = 0
+            self._last_gdm_scan_ts = 0.0
+            self._last_scene_scan_ts = 0.0
             self._table_cache.clear()
 
     def _ensure_connected(self) -> bool:
@@ -269,8 +323,15 @@ class LiveMemoryReader:
         self.pid = pid
         self.handle = h
         self.can_write = can_write
-        self.main_base = detect_main_base(self.game_dir)
+        self.main_base, self.bss_start, self.bss_end, self.main_size = detect_main_layout(self.game_dir)
+        self.gdm_slot = None
+        self.pouch_slot = None
+        self.scene_slot = None
+        self.actor_offsets = (GAME_ACTOR_NAME, GAME_ACTOR_POS, GAME_ACTOR_ROT)
+        self.live_layout = "unknown"
         self.guard_ok = 0
+        self._last_gdm_scan_ts = 0.0
+        self._last_scene_scan_ts = 0.0
         self._table_cache.clear()
         return True
 
@@ -345,9 +406,157 @@ class LiveMemoryReader:
         b = self.read_bytes(addr, 8)
         return struct.unpack("<Q", b)[0] if b else None
 
+    def _is_heap_ptr(self, val: int) -> bool:
+        if val < 0x100000 or val >= (1 << 47) or (val & 7) != 0:
+            return False
+        main_end = self.main_base + (self.main_size or 0x6000000)
+        if self.main_base <= val < main_end:
+            return False
+        return True
+
+    def _iter_bss_ranges(self) -> list[tuple[int, int]]:
+        """Retorna regiões (addr, size) candidatas ao .bss do módulo main."""
+        ranges: list[tuple[int, int]] = []
+        if self.bss_end > self.bss_start:
+            ranges.append((self.main_base + self.bss_start, self.bss_end - self.bss_start))
+            return ranges
+        limit = self.main_base + max(self.main_size, 0x6800000)
+        addr = self.main_base + 0x2000000
+        mbi = MEMORY_BASIC_INFORMATION()
+        while addr < limit:
+            if not _kernel32.VirtualQueryEx(self.handle, ctypes.c_void_p(addr), ctypes.byref(mbi), ctypes.sizeof(mbi)):
+                break
+            reg_size = int(mbi.RegionSize or 0)
+            if reg_size <= 0:
+                break
+            if mbi.State == MEM_COMMIT and (mbi.Protect & 0xFF) in (PAGE_READWRITE, PAGE_EXECUTE_READWRITE):
+                if reg_size <= 0x2000000:
+                    ranges.append((int(mbi.BaseAddress or addr), reg_size))
+            addr = int(mbi.BaseAddress or addr) + reg_size
+        return ranges
+
+    def _scan_gdm_slot(self) -> int | None:
+        """Varre o .bss de main para descobrir dinamicamente o ponteiro GameDataMgr."""
+        seen: set[int] = set()
+        for base_addr, size in self._iter_bss_ranges():
+            buf = self.read_bytes(base_addr, size)
+            if not buf:
+                continue
+            aligned_len = (len(buf) // 8) * 8
+            for off in range(0, aligned_len, 8):
+                cand = struct.unpack_from("<Q", buf, off)[0]
+                if not self._is_heap_ptr(cand) or cand in seen:
+                    continue
+                seen.add(cand)
+                hdr = self.read_bytes(cand, 0xF8)
+                if not hdr or len(hdr) < 0xF8:
+                    continue
+                b_cnt = struct.unpack_from("<i", hdr, 0x10)[0]
+                b_ent, b_idx, _bu, b_cap = struct.unpack_from("<QQII", hdr, 0x18)
+                if not (
+                    1000 <= b_cnt <= MAX_TABLE
+                    and b_cnt <= b_cap <= 2 * MAX_TABLE
+                    and self._is_heap_ptr(b_ent)
+                    and self._is_heap_ptr(b_idx)
+                ):
+                    continue
+                i_cnt = struct.unpack_from("<i", hdr, 0xD0)[0]
+                i_ent, i_idx, _iu, i_cap = struct.unpack_from("<QQII", hdr, 0xD8)
+                if not (
+                    50 <= i_cnt <= MAX_TABLE
+                    and i_cnt <= i_cap <= 2 * MAX_TABLE
+                    and self._is_heap_ptr(i_ent)
+                    and self._is_heap_ptr(i_idx)
+                ):
+                    continue
+                self._table_cache.clear()
+                if (
+                    self._lookup_entry(cand, T_INT, "PlayerStatus.MaxLife") is not None
+                    and self._lookup_entry(cand, T_STRARR, "Pouch.Weapon.Content.Name") is not None
+                ):
+                    self._table_cache.clear()
+                    return (base_addr + off) - self.main_base
+        self._table_cache.clear()
+        return None
+
+    def _probe_scene_slot(self, slot_off: int, layouts: tuple[tuple[int, int, int], ...]) -> tuple[int, tuple[int, int, int]] | None:
+        """Verifica se slot_off aponta para Module -> Scene -> Player e retorna (actor, offsets)."""
+        module = self.read_u64(self.main_base + slot_off)
+        if not module or not self._is_heap_ptr(module):
+            return None
+        scene = self.read_u64(module + 0x1E8)
+        if not scene or not self._is_heap_ptr(scene):
+            return None
+        count = self.read_i32(scene + 0x50)
+        if count is None or count < 14 or count > 256:
+            return None
+        components = self.read_u64(scene + 0x58)
+        if not components or not self._is_heap_ptr(components):
+            return None
+        resident = self.read_u64(components + 13 * 8)
+        if not resident or not self._is_heap_ptr(resident):
+            return None
+        rcount = self.read_i32(resident + 0x20)
+        if rcount is None or rcount < 1 or rcount > 64:
+            return None
+        links = self.read_u64(resident + 0x28)
+        if not links or not self._is_heap_ptr(links):
+            return None
+        for i in range(rcount):
+            data = self.read_u64(links + i * 0x70 + 8)
+            if not data or not self._is_heap_ptr(data):
+                continue
+            actor = self.read_u64(data + 0x40)
+            if not actor or not self._is_heap_ptr(actor):
+                continue
+            for name_off, pos_off, rot_off in layouts:
+                name_ptr = self.read_u64(actor + name_off)
+                if not name_ptr or name_ptr < 0x10000 or name_ptr >= (1 << 47):
+                    continue
+                nm = self.read_bytes(name_ptr, 7)
+                if nm != b"Player\0":
+                    continue
+                pos_b = self.read_bytes(actor + pos_off, 12)
+                if not pos_b:
+                    continue
+                pos = struct.unpack("<3f", pos_b)
+                if _pos_ok(pos) and (pos[0] != 0.0 or pos[1] != 0.0 or pos[2] != 0.0):
+                    return actor, (name_off, pos_off, rot_off)
+        return None
+
+    def _scan_scene_slot(self) -> tuple[int, tuple[int, int, int], int] | None:
+        """Descobre dinamicamente SCENE_SLOT e offsets do ator Player para qualquer versão do TotK."""
+        for hint in SCENE_SLOT_HINTS:
+            if hint == self.gdm_slot:
+                continue
+            res = self._probe_scene_slot(hint, ACTOR_LAYOUTS)
+            if res is not None:
+                actor, layout = res
+                return hint, layout, actor
+
+        seen: set[int] = set()
+        for base_addr, size in self._iter_bss_ranges():
+            buf = self.read_bytes(base_addr, size)
+            if not buf:
+                continue
+            aligned_len = (len(buf) // 8) * 8
+            for off in range(0, aligned_len, 8):
+                slot_off = (base_addr + off) - self.main_base
+                if slot_off == self.gdm_slot:
+                    continue
+                cand = struct.unpack_from("<Q", buf, off)[0]
+                if not self._is_heap_ptr(cand) or cand in seen:
+                    continue
+                seen.add(cand)
+                res = self._probe_scene_slot(slot_off, ACTOR_LAYOUTS)
+                if res is not None:
+                    actor, layout = res
+                    return slot_off, layout, actor
+        return None
+
     def _check_guard(self) -> str | None:
-        """Retorna None se o guard passou, ou string de status ('starting' | 'unsupported')."""
-        if self.guard_ok == 1:
+        """Valida v1.4.3 pelo guard rápido ou ativa descoberta universal em outras versões."""
+        if self.guard_ok == 1 and self.gdm_slot is not None:
             return None
         if self.guard_ok == -1:
             return "unsupported"
@@ -359,10 +568,27 @@ class LiveMemoryReader:
             words.append(w)
         digest = hashlib.sha256(b"".join(words)).hexdigest()
         if digest == GUARD_SHA256_V143:
+            self.gdm_slot = GDM_SLOT
+            self.pouch_slot = POUCH_SLOT
+            self.scene_slot = SCENE_SLOT
+            self.actor_offsets = (GAME_ACTOR_NAME, GAME_ACTOR_POS, GAME_ACTOR_ROT)
+            self.live_layout = "v1.4.3"
             self.guard_ok = 1
             return None
-        self.guard_ok = -1
-        return "unsupported"
+
+        now = time.monotonic()
+        if now - self._last_gdm_scan_ts < 1.0:
+            return "starting"
+        self._last_gdm_scan_ts = now
+        gdm_slot = self._scan_gdm_slot()
+        if gdm_slot is not None:
+            self.gdm_slot = gdm_slot
+            self.pouch_slot = None
+            self.scene_slot = None
+            self.live_layout = "universal"
+            self.guard_ok = 1
+            return None
+        return "starting"
 
     def _read_table_hdr(self, gdm: int, t_type: int) -> tuple[int, int, int, int] | None:
         """Retorna (count, entries_ptr, index_ptr, cap) de uma tabela do GameDataMgr."""
@@ -500,47 +726,21 @@ class LiveMemoryReader:
         return out
 
     def _read_player_actor(self) -> int:
-        module = self.read_u64(self.main_base + SCENE_SLOT)
-        if not module:
+        if self.scene_slot is not None:
+            res = self._probe_scene_slot(self.scene_slot, (self.actor_offsets,))
+            return res[0] if res is not None else 0
+        now = time.monotonic()
+        if now - self._last_scene_scan_ts < 1.0:
             return 0
-        scene = self.read_u64(module + 0x1E8)
-        if not scene:
+        self._last_scene_scan_ts = now
+        found = self._scan_scene_slot()
+        if found is None:
             return 0
-        count = self.read_i32(scene + 0x50)
-        if count is None or count < 14 or count > 256:
-            return 0
-        components = self.read_u64(scene + 0x58)
-        if not components:
-            return 0
-        resident = self.read_u64(components + 13 * 8)
-        if not resident:
-            return 0
-        rcount = self.read_i32(resident + 0x20)
-        if rcount is None or rcount < 1 or rcount > 64:
-            return 0
-        links = self.read_u64(resident + 0x28)
-        if not links:
-            return 0
-        for i in range(rcount):
-            data = self.read_u64(links + i * 0x70 + 8)
-            if not data:
-                continue
-            actor = self.read_u64(data + 0x40)
-            if not actor:
-                continue
-            name_ptr = self.read_u64(actor + GAME_ACTOR_NAME)
-            if not name_ptr:
-                continue
-            nm = self.read_bytes(name_ptr, 7)
-            if nm != b"Player\0":
-                continue
-            pos_b = self.read_bytes(actor + GAME_ACTOR_POS, 12)
-            if not pos_b:
-                continue
-            pos = struct.unpack("<3f", pos_b)
-            if _pos_ok(pos) and (pos[0] != 0.0 or pos[1] != 0.0 or pos[2] != 0.0):
-                return actor
-        return 0
+        slot_off, layout, actor = found
+        self.scene_slot = slot_off
+        self.actor_offsets = layout
+        self.live_layout = "universal (v1.0.0)" if layout[0] == 0x210 else "universal (v1.1.0+)"
+        return actor
 
     def _bulk_read_scalar_table(self, gdm: int, t_type: int) -> dict[int, int]:
         """Lê em lote toda uma tabela hash (T_BOOL, T_INT ou T_ENUM) para dict {hash: valor}."""
@@ -641,17 +841,21 @@ class LiveMemoryReader:
         g_err = self._check_guard()
         if g_err:
             return g_err, 0, 0, None
-        gdm = self.read_u64(self.main_base + GDM_SLOT) or 0
+        gdm = self.read_u64(self.main_base + (self.gdm_slot if self.gdm_slot is not None else GDM_SLOT)) or 0
         if not gdm:
             return "starting", 0, 0, None
         self._table_cache.clear()
         max_life = self._gd_int(gdm, "PlayerStatus.MaxLife")
         if max_life is None or max_life < 4 or max_life > 400:
             return "starting", 0, 0, None
-        pouch_ptr = self.read_u64(self.main_base + POUCH_SLOT) or 0
-        part = self.read_u32(pouch_ptr + POUCH_PART) if pouch_ptr else None
-        if part is None or part >= 2:
-            part = None
+        if self.pouch_slot is not None:
+            pouch_ptr = self.read_u64(self.main_base + self.pouch_slot) or 0
+            part = self.read_u32(pouch_ptr + POUCH_PART) if pouch_ptr else None
+            if part is None or part >= 2:
+                part = None
+        else:
+            valid = self._read_words(gdm, T_INTARR, "Pouch.Weapon.ValidNum", 0, 2)
+            part = 1 if (valid and len(valid) >= 2 and valid[0] <= 0 and valid[1] > 0) else 0
         actor = self._read_player_actor()
         if not actor:
             return "title", gdm, 0, part
@@ -669,8 +873,9 @@ class LiveMemoryReader:
         if status != "ready":
             return {"mode": "live", "status": status, "pid": self.pid}
 
-        pos_b = self.read_bytes(actor + GAME_ACTOR_POS, 12)
-        rot_b = self.read_bytes(actor + GAME_ACTOR_ROT, 36)
+        _name_off, pos_off, rot_off = self.actor_offsets
+        pos_b = self.read_bytes(actor + pos_off, 12)
+        rot_b = self.read_bytes(actor + rot_off, 36)
         pos: tuple[float, float, float] | None = None
         if pos_b:
             cand = struct.unpack("<3f", pos_b)
@@ -706,9 +911,12 @@ class LiveMemoryReader:
                 "time": self._gd_float(gdm, "PlayerStatus.CookBuffTime", 0.0) or 0.0,
             }
 
-        pouch_ptr = self.read_u64(self.main_base + POUCH_SLOT) or 0
-        menu_flag = self.read_u8(pouch_ptr + POUCH_MENU) if pouch_ptr else 0
-        pause_menu = bool(menu_flag) if menu_flag is not None else False
+        if self.pouch_slot is not None:
+            pouch_ptr = self.read_u64(self.main_base + self.pouch_slot) or 0
+            menu_flag = self.read_u8(pouch_ptr + POUCH_MENU) if pouch_ptr else 0
+            pause_menu = bool(menu_flag) if menu_flag is not None else False
+        else:
+            pause_menu = False
 
         player = {
             "life": self._gd_int(gdm, "PlayerStatus.Life", 12),

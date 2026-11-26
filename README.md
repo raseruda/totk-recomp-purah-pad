@@ -28,6 +28,7 @@ O mod já inclui o **runtime oficial do Python 3.12 embutido de forma 100% stand
 ## Features / Principais Recursos
 
 - **Zero-Setup Auto-Start (`winmm.dll` + embedded official `python312.dll`)**: `winmm.dll` loads the official Python Software Foundation–signed `python312.dll` runtime directly in-process with open readable `.py` scripts — zero `.exe` files, zero PyInstaller wrappers, and zero external Python installation needed. Drop `winmm.dll` and `PurahPad/` next to `totk.exe`, and opening the game automatically launches Purah Pad borderless on Monitor 2 and closes cleanly when you exit.
+- **Universal Multi-Version Support (`v1.0.0` – `v1.4.3`, including `v1.2.1`)**: Dynamically reads both `index.json` / `romfs-index.bin` (`TOTKRFS1`) and unpacked `romfs/` folders, auto-selects the highest `Product.<N>` tables in your RomFS dump (falling back cleanly to English on `< v1.4.0` releases where Portuguese was not yet present in RomFS), and automatically discovers live memory singletons in `.bss` across all TotK versions supported by `totk-pc-recomp`.
 - **Real-Time Interactive Map (Sky, Surface, Depths)**:
   - **Auto-Layer** tracking Link's vertical coordinate + smooth **Follow Link** tracking.
   - **3 Map Modes**: **Spoiler-Free** (only discovered regions/markers), **Assist / Radar** (`50 m – 1000 m`, default `200 m` reveal circle around Link), and **Completionist** (everything across Hyrule).
@@ -46,12 +47,12 @@ O mod já inclui o **runtime oficial do Python 3.12 embutido de forma 100% stand
 ## Installation / Instalação
 
 ### Requirements / Pré-requisitos
-- **The Legend of Zelda: Tears of the Kingdom — PC Recomp** with extracted `romfs/` game files present in the game folder.
+- **The Legend of Zelda: Tears of the Kingdom — PC Recomp** (`v1.0.0` through `v1.4.3`, including `v1.2.1`) with `romfs/` game files present in the game folder.
 - **No Python installation required** (the official PSF-signed `python312.dll` embedded runtime and required modules are bundled inside `PurahPad\python\`, alongside open readable `.py` scripts).
 - **Microsoft Edge**, **Google Chrome**, **Brave**, or **Vivaldi** (uses App Mode for the dedicated second-screen window; falls back to your default browser if none are installed).
 
 ### Setup Steps / Passo a passo
-1. Download `PurahPad_TotK_Recomp_v1.2.2.zip` from [Releases](../../releases).
+1. Download `PurahPad_TotK_Recomp_v1.2.3.zip` from [Releases](../../releases).
 2. Extract **`winmm.dll`** and the entire **`PurahPad/`** folder into your TotK Recomp installation folder (right next to `totk.exe` and `romfs/`).
 3. Launch the game normally (`totk.exe`):
    - On first launch, Purah Pad automatically detects your game language and builds the local cache of map tiles, icons, quests, and items (~15–25 seconds).
